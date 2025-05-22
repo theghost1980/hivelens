@@ -16,10 +16,26 @@ import { TimeUtils } from "./time.utils";
 // Next.js automatically loads .env.local, .env.development, .env.production, .env
 // For server-side code, direct access to process.env should work.
 // Explicitly calling dotenv.config() here can be a fallback.
-if (!process.env.HIVE_HOST) { // Check if one of the crucial env vars is missing
-  dotenv.config({ path: '.env' }); // Specify .env path if needed, or ensure it's in root
+// We check for one variable; if it's missing, we attempt to load .env
+if (!process.env.HIVE_HOST) {
+  dotenv.config({ path: '.env' }); 
 }
 
+// Validate essential environment variables
+const requiredEnvVars = [
+  'HIVE_USER',
+  'HIVE_PASSWORD',
+  'HIVE_DATABASE',
+  'HIVE_HOST',
+];
+
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingEnvVars.length > 0) {
+  const errorMessage = `Missing required HiveSQL environment variables: ${missingEnvVars.join(', ')}. Please ensure they are set in your .env file.`;
+  console.error(errorMessage);
+  throw new Error(errorMessage);
+}
 
 const sqlConfig: sql.config = {
   user: process.env.HIVE_USER!,
