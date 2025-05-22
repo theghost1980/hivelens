@@ -14,38 +14,48 @@ export function ImageCard({ image }: ImageCardProps) {
   const parsedDate = new Date(image.timestamp);
   const timeAgo = isNaN(parsedDate.getTime()) ? 'Invalid date' : formatDistanceToNow(parsedDate, { addSuffix: true });
   
-  // Extract AI hint from imageUrl if present
-  let displayImageUrl = image.imageUrl;
-  let aiHint = "";
-  try {
-    const url = new URL(image.imageUrl);
-    aiHint = url.searchParams.get("ai_hint") || "";
-    url.searchParams.delete("ai_hint"); // Remove for display to keep URL clean
-    displayImageUrl = url.toString();
-  } catch (e) {
-    // Invalid URL, use as is
+  const displayImageUrl = image.imageUrl;
+  let generatedAiHint = "";
+
+  if (image.aiAnalysis && image.aiAnalysis.features.length > 0) {
+    // Use first two features, or parts of them, for the hint
+    generatedAiHint = image.aiAnalysis.features.map(f => f.split(':').pop()).slice(0, 2).join(' ').substring(0, 50);
+  } else if (image.tags && image.tags.length > 0) {
+    generatedAiHint = image.tags.slice(0, 2).join(' ');
+  } else if (image.title) {
+    // Take first two words of title
+    generatedAiHint = image.title.split(/\s+/).slice(0, 2).join(' ');
+  }
+  generatedAiHint = generatedAiHint.toLowerCase().replace(/[^a-z0-9\s]/gi, '').trim();
+  if (!generatedAiHint) {
+    generatedAiHint = "image content"; // Fallback hint
   }
 
 
   return (
     <Card className="flex flex-col overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300">
       <CardHeader className="p-4">
-        <CardTitle className="text-lg truncate" title={image.title}>{image.title}</CardTitle>
+        <CardTitle className="text-lg truncate" title={image.title}>{image.title || 'Untitled Image'}</CardTitle>
         <CardDescription className="flex items-center text-xs text-muted-foreground">
           <User className="w-3 h-3 mr-1" />
           {image.author}
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0 flex-grow">
-        <div className="aspect-[3/2] relative w-full">
+        <div className="aspect-[3/2] relative w-full bg-muted">
           <Image
             src={displayImageUrl}
-            alt={image.title}
+            alt={image.title || 'Hive Image'}
             fill
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
             className="object-cover"
-            data-ai-hint={aiHint}
-            priority={image.id.endsWith('-1') || image.id.endsWith('-2')} // Prioritize first few images
+            data-ai-hint={generatedAiHint}
+            priority={image.id.endsWith('-1') || image.id.endsWith('-0')} // Prioritize first image from a post
+            onError={(e) => {
+              // Optional: handle image loading errors, e.g. show a fallback
+              // console.warn(`Error loading image: ${displayImageUrl}`, e);
+              // (e.target as HTMLImageElement).src = 'https://placehold.co/600x400.png?text=Error';
+            }}
           />
         </div>
         <div className="p-4 space-y-2">

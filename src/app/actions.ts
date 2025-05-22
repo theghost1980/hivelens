@@ -1,80 +1,137 @@
+
 'use server';
 
-import type { HiveImage } from '@/lib/types';
+import type { HiveImage, AIAnalysis } from '@/lib/types';
+import { executeQuery } from '@/lib/hivesql';
 // The Genkit AI flow is available but not directly called in this mock sync 
 // to avoid complexities with data URI conversion for remote images in a scaffold.
 // import { analyzeImageContent } from '@/ai/flows/analyze-image-content';
 
-// Helper to generate a placeholder data URI string if needed by AI flow.
-// In a real scenario, this would fetch an image and convert it.
-// For this scaffold, we're mocking AI analysis results directly.
-// async function getPlaceholderDataUri(imageUrl: string): Promise<string> {
-//   // Example: 1x1 transparent PNG
-//   return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
-// }
+interface HivePostComment {
+  author: string;
+  timestamp: Date; // SQL returns Date objects for datetime types
+  title: string;
+  permlink: string;
+  json_metadata: string; // This is a JSON string
+  postUrl: string; // This will be constructed
+}
+
+// Helper to safely parse JSON metadata
+function parseJsonMetadata(metadataString: string): { image?: string[], tags?: string[], [key: string]: any } {
+  if (!metadataString) return {};
+  try {
+    const parsed = JSON.parse(metadataString);
+    return {
+      image: Array.isArray(parsed.image) ? parsed.image.filter(img => typeof img === 'string' && img.startsWith('http')) : [],
+      tags: Array.isArray(parsed.tags) ? parsed.tags.filter(tag => typeof tag === 'string') : [],
+      ...parsed
+    };
+  } catch (e) {
+    // console.warn('Error parsing json_metadata:', e, "Metadata string:", metadataString);
+    return {}; // Return empty object or default structure on error
+  }
+}
+
 
 export async function syncHiveData(): Promise<HiveImage[]> {
-  // Simulate fetching data from HiveSQL
-  const mockPostsFromHive = [
-    { id: 'post1', author: 'hivelover', timestamp: new Date(2023, 0, 15, 10, 30).toISOString(), title: 'My Awesome Trip to the Mountains', images: ['https://placehold.co/600x400.png'], postUrl: 'https://hive.blog/hivelover/awesome-trip', tags: ['travel', 'mountains', 'nature'] },
-    { id: 'post2', author: 'photoguru', timestamp: new Date(2023, 1, 20, 14,0).toISOString(), title: 'Forest Wonders', images: ['https://placehold.co/300x200.png', 'https://placehold.co/400x300.png'], postUrl: 'https://hive.blog/photoguru/forest-wonders', tags: ['photography', 'forest', 'landscape'] },
-    { id: 'post3', author: 'cityexplorer', timestamp: new Date(2023, 2, 10, 18,45).toISOString(), title: 'Urban Jungle: City Lights', images: ['https://placehold.co/600x400.png'], postUrl: 'https://hive.blog/cityexplorer/urban-jungle', tags: ['city', 'urban', 'nightlife'] },
-    { id: 'post4', author: 'techwiz', timestamp: new Date(2024, 5, 1, 9,15).toISOString(), title: 'Highlights from Tech Expo 2024', images: ['https://placehold.co/320x240.png', 'https://placehold.co/640x480.png'], postUrl: 'https://hive.blog/techwiz/tech-expo-2024', tags: ['technology', 'conference', 'innovation'] },
-    { id: 'post5', author: 'foodiequeen', timestamp: new Date(2024, 4, 25, 12,0).toISOString(), title: 'Delicious Street Food Adventures', images: ['https://placehold.co/500x350.png'], postUrl: 'https://hive.blog/foodiequeen/street-food', tags: ['food', 'travel', 'streetfood'] },
-  ];
-
-  const allImages: HiveImage[] = [];
-  let imageIdCounter = 0;
-
-  const aiHints: { [key: string]: string } = {
-    'https://placehold.co/600x400.png_post1': 'landscape mountain', // My Awesome Trip
-    'https://placehold.co/300x200.png_post2': 'nature forest',    // Forest Wonders 1
-    'https://placehold.co/400x300.png_post2': 'nature lake',      // Forest Wonders 2
-    'https://placehold.co/600x400.png_post3': 'city skyline',   // Urban Jungle
-    'https://placehold.co/320x240.png_post4': 'tech conference', // Tech Expo 1
-    'https://placehold.co/640x480.png_post4': 'gadgets devices',  // Tech Expo 2
-    'https://placehold.co/500x350.png_post5': 'food street food', // Street Food
-  };
-
-
-  for (const post of mockPostsFromHive) {
-    for (const imageUrl of post.images) {
-      imageIdCounter++;
-      const uniqueImageKey = `${imageUrl}_${post.id}`;
-      const currentAiHint = aiHints[uniqueImageKey] || 'abstract pattern';
-      
-      // Modify imageUrl to include data-ai-hint
-      const placeholderUrl = new URL(imageUrl);
-      // Remove existing text query param if any, to avoid conflicts
-      placeholderUrl.searchParams.delete('text');
-      const hintAdjustedImageUrl = `${placeholderUrl.origin}${placeholderUrl.pathname}`;
-
-
-      const image: HiveImage = {
-        id: `img-${imageIdCounter}`,
-        // Use hintAdjustedImageUrl which does not include text param for placeholder
-        imageUrl: hintAdjustedImageUrl, 
-        author: post.author,
-        timestamp: post.timestamp,
-        title: `${post.title} (Image ${imageIdCounter})`,
-        postUrl: post.postUrl,
-        tags: post.tags,
-        // Mock AI analysis - this would be the result stored in a local DB after calling Gemini
-        aiAnalysis: {
-          contentType: post.tags.includes('nature') || post.tags.includes('travel') ? 'Scenery' : (post.tags.includes('city') || post.tags.includes('urban')) ? 'Urban Scene' : post.tags.includes('technology') ? 'Tech Product' : 'General',
-          features: [`color:blue`, `object:${currentAiHint.split(" ")[0]}`, `mood:${post.tags[0]}`],
-        },
-      };
-      // Add data-ai-hint for actual image fetching
-      image.imageUrl = `${image.imageUrl}?ai_hint=${encodeURIComponent(currentAiHint)}`;
-      allImages.push(image);
-    }
-  }
-
-  // Simulate network delay for fetching and processing
-  await new Promise(resolve => setTimeout(resolve, 1500));
+  console.log('Starting Hive data sync...');
   
-  return allImages;
+  // Fetch posts from the last 7 days that likely contain images
+  // depth = 0 filters for top-level posts.
+  const query = `
+    SELECT
+        author,
+        created AS timestamp,
+        title,
+        permlink,
+        json_metadata,
+        CONCAT('https://hive.blog/@', author, '/', permlink) as postUrl
+    FROM Comments
+    WHERE
+        depth = 0 
+        AND created >= DATEADD(day, -7, GETUTCDATE())
+        AND (json_metadata LIKE '%"image":%' OR json_metadata LIKE '%"images":%')
+    ORDER BY created DESC;
+  `;
+
+  try {
+    const { results: rawPosts, time } = await executeQuery<HivePostComment>(query);
+    console.log(`Fetched ${rawPosts.length} raw posts from HiveSQL in ${time}ms.`);
+
+    const allImages: HiveImage[] = [];
+    let imageIdCounter = 0;
+
+    for (const post of rawPosts) {
+      if (!post.json_metadata) {
+        // console.log(`Skipping post by ${post.author}/${post.permlink} due to missing json_metadata`);
+        continue;
+      }
+      
+      const metadata = parseJsonMetadata(post.json_metadata);
+      const postImages = metadata.image || [];
+      const postTags = metadata.tags || [];
+
+      if (postImages.length === 0) {
+        // console.log(`Skipping post by ${post.author}/${post.permlink} as no images found in metadata.image`);
+        continue;
+      }
+      
+      for (const imageUrl of postImages) {
+        if (!imageUrl || !imageUrl.startsWith('http')) {
+          // console.log(`Skipping invalid image URL: ${imageUrl} in post ${post.author}/${post.permlink}`);
+          continue;
+        }
+
+        imageIdCounter++;
+        
+        // Mock AI analysis based on tags (as Genkit flow is not active here)
+        const aiContentType = postTags.includes('nature') || postTags.includes('travel') || postTags.includes('landscape') ? 'Scenery' :
+                              postTags.includes('city') || postTags.includes('urban') ? 'Urban Scene' :
+                              postTags.includes('technology') ? 'Tech Product' :
+                              postTags.includes('food') ? 'Food' :
+                              postTags.includes('portrait') || postTags.includes('people') ? 'Portrait' :
+                              'General';
+        
+        const aiFeatures: string[] = [];
+        if (postTags.length > 0) {
+            aiFeatures.push(`tag:${postTags[0].toLowerCase()}`); // First tag as a feature
+            if (postTags.length > 1) {
+                 aiFeatures.push(`tag:${postTags[1].toLowerCase()}`); // Second tag as a feature
+            }
+        } else {
+            aiFeatures.push("general-content");
+        }
+        aiFeatures.push(`type:${aiContentType.toLowerCase().replace(/\s+/g, '-')}`);
+
+
+        const image: HiveImage = {
+          id: `img-${post.author}-${post.permlink}-${imageIdCounter}`,
+          imageUrl: imageUrl,
+          author: post.author,
+          timestamp: post.timestamp.toISOString(), // Convert Date to ISO string
+          title: post.title || `Image from ${post.author}`,
+          postUrl: post.postUrl,
+          tags: postTags,
+          aiAnalysis: {
+            contentType: aiContentType,
+            features: aiFeatures,
+          },
+        };
+        allImages.push(image);
+      }
+    }
+    
+    console.log(`Processed ${allImages.length} images from fetched posts.`);
+    // Simulate additional processing delay if needed, but real query time is main factor now
+    // await new Promise(resolve => setTimeout(resolve, 500)); 
+    
+    return allImages;
+
+  } catch (error) {
+    console.error('Error during syncHiveData:', error);
+    // Return empty array or re-throw, depending on how page should handle it
+    return []; 
+  }
 }
 
 // This function is a placeholder for how you might trigger analysis for a single image
@@ -82,6 +139,8 @@ export async function syncHiveData(): Promise<HiveImage[]> {
 /*
 export async function analyzeSingleImageWithAI(photoDataUri: string): Promise<AIAnalysis | null> {
   try {
+    // This would require fetching the image from imageUrl, converting to data URI
+    // const photoDataUri = await convertImageUrlToDataUri(imageUrl); 
     const analysis = await analyzeImageContent({ photoDataUri });
     return analysis;
   } catch (error) {
