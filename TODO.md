@@ -2,6 +2,9 @@
 
 # TODO List - Hivelens Project
 
+- [ ] **(Alta Prioridad)** Implementar un mecanismo de bloqueo (semáforo) para `syncAndStoreHiveData` para prevenir sincronizaciones concurrentes y notificar al usuario si un proceso ya está activo.
+- [ ] **(Prioridad Media/Alta)** Investigar y, si es factible con la arquitectura actual, implementar una forma de mostrar el estado o progreso de una sincronización en curso. Esto podría ser un indicador simple (ej. "Sincronización en progreso desde X") o algo más detallado si se implementa un sistema de estado/notificaciones.
+
 - [ ] Planificar e implementar una estrategia de respaldos (backups) para la base de datos SQLite, considerando su crecimiento estimado.
 - [ ] Implementar funcionalidad de backup de la BD (usando el comando `.backup` de SQLite o la API de backup online si la librería lo permite).
 
