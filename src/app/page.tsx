@@ -1,17 +1,20 @@
 "use client";
 
 import { ImageResultsGrid } from "@/components/image-results-grid";
-import { AppHeader } from "@/components/layout/app-header";
+import { SearchControls } from "@/components/search-controls";
 import {
-  SearchControls,
-  type SearchFilters,
-} from "@/components/search-controls";
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import { useDebounce } from "@/hooks/use-debounce";
 import { useToast } from "@/hooks/use-toast";
-import type { HiveImage } from "@/lib/types";
+import type { HiveImage, SearchFilters } from "@/lib/types";
 import { format, parseISO } from "date-fns";
-import { DownloadCloud, Loader2, XCircle } from "lucide-react";
+import { Loader2, XCircle } from "lucide-react";
+import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import {
   checkIfDateRangeHasData,
@@ -44,7 +47,6 @@ export default function HomePage() {
 
   const { toast } = useToast();
 
-  // 👇 Central debounce
   const debouncedFilters = useDebounce(filters, 10);
 
   const handleFiltersChange = useCallback((newFilters: SearchFilters) => {
@@ -151,13 +153,25 @@ export default function HomePage() {
           confirmed: true,
         });
         if (finalResult.status === "success") {
-          let description = `Sincronización completada. ${finalResult.newImagesAdded} imágenes nuevas añadidas.`;
-          description += `\n${finalResult.existingImagesSkipped} duplicados omitidos.`;
-          description += `\n${finalResult.invalidOrInaccessibleImagesSkipped} URLs inválidas/rotas omitidas.`;
-          console.log({ description });
-        }
-        if (finalResult.status === "success") {
+          const descriptionParts = [
+            `Sync complete. ${finalResult.newImagesAdded} new images added.`,
+            `${finalResult.existingImagesSkipped} duplicates skipped.`,
+            `${finalResult.invalidOrInaccessibleImagesSkipped} invalid/broken URLs skipped.`,
+          ];
+          if (finalResult.dbErrors && finalResult.dbErrors > 0) {
+            descriptionParts.push(`${finalResult.dbErrors} DB errors.`);
+          }
+          toast({
+            title: "Sync Successful",
+            description: descriptionParts.join("\n"),
+          });
           await handleSearch(filters, 1);
+        } else if (finalResult.status === "error") {
+          toast({
+            title: "Sync Error",
+            description: finalResult.message,
+            variant: "destructive",
+          });
         }
       } else if (response.status === "success") {
         await handleSearch(filters, 1);
@@ -198,34 +212,72 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
-      <AppHeader />
       <main className="flex-grow container mx-auto px-4 py-8">
-        <div className="flex flex-col sm:flex-row justify-between items-center mb-8 gap-4">
+        {/* Encabezado con Logo y Título */}
+        <header className="mb-12 flex items-center gap-4">
+          <div className="flex-shrink-0">
+            <Image
+              src="/logo.png"
+              alt="Hivelens Logo"
+              width={60}
+              height={60}
+              priority
+            />
+          </div>
+          {/* Título y Slogan */}
+          <div>
+            <h1 className="text-3xl sm:text-4xl font-bold text-primary">
+              Hivelens
+            </h1>
+            <p className="text-sm sm:text-base text-muted-foreground mt-1">
+              Explore and discover images from the HIVE blockchain.
+            </p>
+          </div>
+        </header>
+
+        {/* Sección de Controles de Búsqueda y Sincronización */}
+        <section className="mb-8">
           <SearchControls
             filters={filters}
             onFiltersChange={handleFiltersChange}
             onSearch={() => handleSearch(filters, 1)}
             availableTags={availableTags}
-            isLoading={isSearching || isSyncing}
+            isSearching={isSearching}
             syncedDays={syncedDays}
+            onSync={handleSync}
+            isSyncing={isSyncing}
           />
-          <Button
-            onClick={handleSync}
-            disabled={
-              isSearching ||
-              isSyncing ||
-              !filters.dateRange?.from ||
-              !filters.dateRange?.to
-            }
-          >
-            {isSyncing ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <DownloadCloud className="mr-2 h-4 w-4" />
-            )}
-            {isSyncing ? "Syncing..." : "Sync with Hive"}
-          </Button>
-        </div>
+
+          {/* Sección Expandible de Explicación del Sync */}
+          <Accordion type="single" collapsible className="w-full mt-6">
+            <AccordionItem value="sync-explanation">
+              <AccordionTrigger className="text-sm text-muted-foreground hover:no-underline font-semibold">
+                How does the synchronization process work?
+              </AccordionTrigger>
+              <AccordionContent className="text-sm text-muted-foreground space-y-2 pt-2">
+                <p>
+                  The synchronization process connects to the HIVE blockchain to
+                  fetch posts within the selected date range.
+                </p>
+                <p>
+                  For each post, it extracts image URLs, validates them to
+                  ensure they are accessible and actual images, and then stores
+                  the image metadata (like author, post link, tags, and the
+                  image URL itself) in a local SQLite database.
+                </p>
+                <p>
+                  If you select a large date range, this process can take some
+                  time (approx. 40 minutes per day of data). You will be asked
+                  for confirmation if the estimated time is significant.
+                </p>
+                <p>
+                  Once synced, you can search these images instantly using the
+                  filters above.
+                </p>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </section>
 
         {isSearching || isSyncing ? (
           <div className="flex justify-center py-12">
@@ -274,7 +326,7 @@ export default function HomePage() {
         )}
       </main>
       <footer className="py-6 text-center text-sm text-muted-foreground border-t">
-        Built with Next.js, ShadCN UI, and Genkit. Powered by Hive.
+        Built with Next.js, ShadCN UI, and Genkit. Powered by Hive & HiveSQL.
       </footer>
     </div>
   );

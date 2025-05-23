@@ -2,8 +2,8 @@
 
 # TODO List - Hivelens Project
 
-- [ ] Implementar inserciones por lotes (batch inserts) en la base de datos SQLite para `syncAndStoreHiveData`.
-- Mover la BD a otra carpeta sola aparte por seguridad y para no tenerla dentro del repo. Preguntar a chat que opciones buenas tenemos para esto pensando en futuros respaldos y backups y e lcrecimiento posible que para un año seran como 1.8 GB a 5mg por dia.
+- [ ] Planificar e implementar una estrategia de respaldos (backups) para la base de datos SQLite, considerando su crecimiento estimado.
+- [ ] Implementar funcionalidad de backup de la BD (usando el comando `.backup` de SQLite o la API de backup online si la librería lo permite).
 
 ## I. Análisis con Inteligencia Artificial (IA)
 

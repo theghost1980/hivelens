@@ -17,9 +17,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { SearchControlsProps, SearchFilters } from "@/lib/types";
 import { format } from "date-fns";
 import {
   CalendarIcon,
+  DownloadCloud,
+  Loader2,
   RotateCcw,
   Search,
   Tag,
@@ -30,31 +33,15 @@ import {
 import React, { useEffect, useState, type FormEvent } from "react";
 import type { DateRange } from "react-day-picker";
 
-export interface SearchFilters {
-  searchTerm: string;
-  title?: string;
-  tags?: string;
-  author: string;
-  dateRange?: DateRange;
-  searchInBody?: boolean;
-}
-
-interface SearchControlsProps {
-  onSearch: (filters: SearchFilters) => void;
-  filters: SearchFilters;
-  onFiltersChange: (filters: SearchFilters) => void;
-  syncedDays?: Date[];
-  isLoading?: boolean;
-  availableTags: string[];
-}
-
 function SearchControlsComponent({
   availableTags,
   onSearch,
   filters,
   onFiltersChange,
   syncedDays,
-  isLoading,
+  isSearching,
+  onSync,
+  isSyncing,
 }: SearchControlsProps) {
   const [isTagsComboboxOpen, setIsTagsComboboxOpen] = useState(false);
   const [tagsComboboxInputValue, setTagsComboboxInputValue] = useState("");
@@ -304,12 +291,33 @@ function SearchControlsComponent({
           </Popover>
         </div>
       </div>
-      <div className="flex flex-col sm:flex-row justify-end gap-3 pt-4 border-t border-border">
+      <div className="flex flex-col sm:flex-row justify-start gap-3 pt-6 border-t border-border mt-6">
+        {/* Botón de Sync with Hive */}
+        <Button
+          type="button"
+          variant="default"
+          onClick={onSync}
+          disabled={
+            isSearching ||
+            isSyncing ||
+            !filters.dateRange?.from ||
+            !filters.dateRange?.to
+          }
+          className="w-full sm:w-auto"
+        >
+          {isSyncing ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <DownloadCloud className="mr-2 h-4 w-4" />
+          )}
+          {isSyncing ? "Syncing..." : "Sync with Hive"}
+        </Button>
+
         <Button
           type="button"
           variant="outline"
           onClick={handleReset}
-          disabled={isLoading}
+          disabled={isSearching || isSyncing}
           className="w-full sm:w-auto"
         >
           <RotateCcw className="mr-2 h-4 w-4" />
@@ -317,11 +325,11 @@ function SearchControlsComponent({
         </Button>
         <Button
           type="submit"
-          disabled={isLoading}
+          disabled={isSearching || isSyncing}
           className="w-full sm:w-auto bg-primary hover:bg-primary/90"
         >
           <Search className="mr-2 h-4 w-4" />
-          {isLoading ? "Searching..." : "Search Images"}
+          {isSearching ? "Searching..." : "Search Images"}
         </Button>
       </div>
     </form>

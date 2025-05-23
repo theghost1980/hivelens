@@ -13,7 +13,7 @@ export async function GET(request: Request) {
     description_en:
       "API to search indexed images from the Hive blockchain and retrieve related metadata.",
     documentation_url:
-      "https://github.com/TU_USUARIO_GITHUB/TU_REPOSITORIO/blob/main/README.md",
+      "https://github.com/theghost1980/hivelens/blob/master/README.md",
     _links: {
       self: {
         href: `${baseUrl}/api`,

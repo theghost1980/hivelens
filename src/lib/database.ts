@@ -3,7 +3,12 @@ import path from "path";
 import { open, type Database } from "sqlite";
 import sqlite3 from "sqlite3";
 import { TimeUtils } from "./time.utils";
-import type { HiveImage } from "./types";
+import type {
+  HiveImage,
+  ImageRecord,
+  RawHiveDataRow,
+  SearchFiltersDb,
+} from "./types";
 
 const DB_FILE_PATH = path.join(
   process.cwd(),
@@ -11,6 +16,8 @@ const DB_FILE_PATH = path.join(
   "BD-central",
   "hivelens.db"
 );
+
+export { DB_FILE_PATH };
 
 let dbInstance: Database | null = null;
 
@@ -92,16 +99,6 @@ export async function initializeDatabase(): Promise<void> {
   }
 }
 
-export interface ImageRecord {
-  image_url: string;
-  hive_author?: string;
-  hive_permlink?: string;
-  hive_post_url?: string;
-  hive_title?: string;
-  hive_timestamp?: string;
-  hive_tags?: string;
-}
-
 export async function insertImage(
   image: ImageRecord
 ): Promise<{ id: number | undefined; new: boolean }> {
@@ -154,7 +151,6 @@ export async function insertManyImages(
   }
 
   const db = await getDb();
-  // Each image record has 7 fields + 1 for 'ai_analysis_status'
   const placeholders = images
     .map(() => "(?, ?, ?, ?, ?, ?, ?, 'pending')")
     .join(", ");
@@ -182,29 +178,8 @@ export async function insertManyImages(
     return { newImagesAdded: result.changes ?? 0 };
   } catch (error: any) {
     console.error("Error inserting multiple images:", error);
-    throw error; // Re-throw to be handled by the caller
+    throw error;
   }
-}
-
-export interface SearchFiltersDb {
-  searchTerm?: string;
-  author?: string;
-  title?: string;
-  tags?: string; // Expecting comma-separated tags or a single tag
-  dateFrom?: string;
-  dateTo?: string;
-}
-interface RawHiveDataRow {
-  id: number;
-  image_url: string;
-  hive_author: string;
-  hive_permlink: string;
-  hive_post_url: string;
-  hive_title: string;
-  hive_timestamp: string;
-  hive_tags: string | null;
-  ai_content_type: string | null;
-  ai_features: string | null;
 }
 
 export async function searchImagesInDb(
@@ -254,12 +229,9 @@ export async function searchImagesInDb(
       .filter((tag) => tag.length > 0);
 
     if (tagsToSearch.length > 0) {
-      // Assuming AND logic: each tag provided must be present in the image's tags
       tagsToSearch.forEach((tag) => {
-        // Use json_each to check for the existence of the tag within the JSON array
-        // LOWER(value) ensures case-insensitive matching with the already lowercased 'tag'
         whereConditions += ` AND EXISTS (SELECT 1 FROM json_each(indexed_images.hive_tags) WHERE LOWER(value) = ?)`;
-        params.push(tag); // Pass the already lowercased tag directly for exact match
+        params.push(tag);
       });
     }
   }
@@ -375,9 +347,6 @@ export async function getDistinctSyncedDates(): Promise<string[]> {
 export async function getUniqueAvailableTags(): Promise<string[]> {
   const db = await getDb();
   try {
-    // Use json_each to iterate over the array elements in the hive_tags column
-    // Use DISTINCT to get unique tag values
-    // ORDER BY value ASC to sort the tags alphabetically
     const rows = await db.all<{ value: string }[]>(`
       SELECT DISTINCT value
       FROM indexed_images, json_each(indexed_images.hive_tags)
@@ -386,6 +355,6 @@ export async function getUniqueAvailableTags(): Promise<string[]> {
     return rows.map((row) => row.value);
   } catch (error) {
     console.error("Error fetching unique available tags:", error);
-    return []; // Return empty array on error
+    return [];
   }
 }

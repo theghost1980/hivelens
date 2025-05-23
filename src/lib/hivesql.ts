@@ -1,24 +1,21 @@
 "use server";
-
 /**
  * @fileOverview HiveSQL database connection and query utilities.
  *
  * - executeQuery - Executes a given SQL query against the HiveSQL database.
  * - testConnection - Tests the connection to HiveSQL with a simple query.
  */
-
 import dotenv from "dotenv";
+import fs from "fs";
 import sql from "mssql";
-import {
-  initializeDatabase,
-  insertManyImages,
-  type ImageRecord,
-} from "./database"; // Importar utilidades de DB
+import { DB_FILE_PATH, initializeDatabase, insertManyImages } from "./database";
 import { TimeUtils } from "./time.utils";
-import { HiveImage } from "./types";
-
-// Fallback for loading .env if essential variables are not already set by the environment (e.g., Next.js)
-// We check for one variable; if it's missing, we attempt to load .env
+import {
+  HiveImage,
+  HivePostCommentForSync,
+  ImageRecord,
+  SyncAndStoreResult,
+} from "./types";
 if (!process.env.HIVE_HOST) {
   dotenv.config({ path: ".env" });
 }
@@ -53,10 +50,10 @@ const sqlConfig: sql.config = {
     idleTimeoutMillis: 30000,
   },
   options: {
-    trustServerCertificate: true, // Recommended to set to false for production with valid certs
-    encrypt: true, // For Azure SQL or if your SQL Server requires encryption
+    trustServerCertificate: true,
+    encrypt: true,
   },
-  requestTimeout: 120000, // 2 minutes
+  requestTimeout: 120000,
 };
 
 /**
@@ -121,18 +118,10 @@ export const testConnection = async (): Promise<{
     return null;
   }
 };
-interface HivePostCommentForSync {
-  author: string;
-  timestamp: Date; // Comes as Date from mssql driver
-  title: string;
-  permlink: string;
-  json_metadata: string; // Raw JSON string
-  postUrl: string;
-}
 
 function parseJsonMetadataForSync(metadataString: string): {
-  image: string[]; // Always returns an array, potentially empty
-  tags: string[]; // Always returns an array, potentially empty
+  image: string[];
+  tags: string[];
   [key: string]: any;
 } {
   if (!metadataString) return { image: [], tags: [] };
@@ -163,7 +152,7 @@ function parseJsonMetadataForSync(metadataString: string): {
       ...parsed,
     };
   } catch (e) {
-    return { image: [], tags: [] }; // Return empty arrays on parse error
+    return { image: [], tags: [] };
   }
 }
 
@@ -177,7 +166,7 @@ async function isValidImageUrl(url: string): Promise<boolean> {
     const response = await fetch(url, {
       method: "HEAD",
       signal: AbortSignal.timeout(5000),
-    }); // 5-second timeout
+    });
     return response.ok;
   } catch (error) {
     console.warn(
@@ -189,41 +178,11 @@ async function isValidImageUrl(url: string): Promise<boolean> {
   }
 }
 
-// --- Tipos de Resultado para syncAndStoreHiveData ---
-export interface SyncSuccessResult {
-  status: "success";
-  images: HiveImage[];
-  newImagesAdded: number;
-  existingImagesSkipped: number;
-  invalidOrInaccessibleImagesSkipped: number;
-  dbErrors: number;
-  message: string;
-}
-
-export interface SyncConfirmationRequiredResult {
-  status: "confirmation_required";
-  estimatedDays: number;
-  estimatedTimePerDayMinutes: number; // El tiempo X que definirás
-  totalEstimatedTimeMinutes: number;
-  message: string;
-}
-
-export interface SyncErrorResult {
-  status: "error";
-  message: string;
-  // Podríamos incluir contadores parciales si el error ocurre a mitad de camino
-  newImagesAdded?: number;
-  existingImagesSkipped?: number;
-  invalidOrInaccessibleImagesSkipped?: number;
-  dbErrors?: number;
-}
-
-export type SyncAndStoreResult =
-  | SyncSuccessResult
-  | SyncConfirmationRequiredResult
-  | SyncErrorResult;
-
 const ESTIMATED_TIME_PER_DAY_MINUTES = 40;
+const MAX_DB_SIZE_BYTES = 4 * 1024 * 1024 * 1024; // 4 GB
+const MAX_DB_SIZE_MB = MAX_DB_SIZE_BYTES / (1024 * 1024);
+const QUOTA_EXCEEDED_MESSAGE =
+  "Please contact admin of the index @theghost1980 in HIVE or discord as the DB has reached maximum allowed quota!";
 
 function calculateDaysBetween(
   isoDateStr1: string,
@@ -231,15 +190,13 @@ function calculateDaysBetween(
 ): number {
   const date1 = new Date(isoDateStr1);
   const date2 = new Date(isoDateStr2);
-  // La query es WHERE created >= startDate AND created < endDate
-  // Por lo tanto, la diferencia directa en días es lo que necesitamos.
-  const diffTime = date2.getTime() - date1.getTime(); // endDate es posterior
+  const diffTime = date2.getTime() - date1.getTime();
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  return Math.max(1, diffDays); // Asegurar al menos 1 día si el rango es muy corto o el mismo día
+  return Math.max(1, diffDays);
 }
 
 function formatMinutesToHoursAndMinutes(totalMinutes: number): string {
-  if (totalMinutes < 0) return "0 minutos"; // Manejar caso negativo aunque no debería ocurrir
+  if (totalMinutes < 0) return "0 minutos";
   if (totalMinutes < 60) {
     return `${totalMinutes} minuto${totalMinutes === 1 ? "" : "s"}`;
   }
@@ -283,10 +240,29 @@ export async function syncAndStoreHiveData(
   let invalidOrInaccessibleImagesSkipped = 0;
   const uiImages: HiveImage[] = [];
   let recordsToInsert: ImageRecord[] = [];
-  const BATCH_SIZE = 100; // Configurable batch size
+  const BATCH_SIZE = 100;
 
   try {
-    // Paso de confirmación
+    // Verificar el tamaño de la base de datos antes de cualquier otra cosa
+    if (fs.existsSync(DB_FILE_PATH)) {
+      const stats = fs.statSync(DB_FILE_PATH);
+      const currentDbSizeBytes = stats.size;
+      const currentDbSizeMB = currentDbSizeBytes / (1024 * 1024);
+
+      if (currentDbSizeBytes > MAX_DB_SIZE_BYTES) {
+        console.warn(
+          `DB size quota exceeded: ${currentDbSizeMB.toFixed(
+            2
+          )}MB / ${MAX_DB_SIZE_MB}MB`
+        );
+        return {
+          status: "quota_exceeded",
+          message: QUOTA_EXCEEDED_MESSAGE,
+          currentDbSizeMB: parseFloat(currentDbSizeMB.toFixed(2)),
+          maxDbSizeMB: MAX_DB_SIZE_MB,
+        };
+      }
+    }
     if (!options?.confirmed) {
       const estimatedDays = calculateDaysBetween(startDateISO, endDateISO);
       const totalEstimatedTimeMinutes =
@@ -311,7 +287,7 @@ export async function syncAndStoreHiveData(
 
     console.log("Confirmación recibida, procediendo con la sincronización...");
     await initializeDatabase();
-    const overallSyncTimer = TimeUtils.start(); // Moved after DB init for more accurate sync timing
+    const overallSyncTimer = TimeUtils.start();
     const { results: rawPosts, time } =
       await executeQuery<HivePostCommentForSync>(query);
     console.log(
@@ -324,13 +300,10 @@ export async function syncAndStoreHiveData(
       if (!post.json_metadata) continue;
 
       const metadata = parseJsonMetadataForSync(post.json_metadata);
-      // metadata.image and metadata.tags are now guaranteed to be arrays by parseJsonMetadataForSync
       const postImages = metadata.image;
       const postTags = metadata.tags;
 
-      // Defensive check and logging for postImages type
       if (!Array.isArray(postImages)) {
-        // This check should ideally no longer be needed but kept for safety
         console.error(
           `CRITICAL TYPE ERROR: postImages is not an array before .map call. Type: ${typeof postImages}, Value: ${JSON.stringify(
             postImages
@@ -347,26 +320,20 @@ export async function syncAndStoreHiveData(
             post.json_metadata
           ).substring(0, 500)}...`
         );
-        // Attempt to count how many images might have been skipped and continue
         const potentialImageCount =
           typeof (postImages as any)?.length === "number"
             ? (postImages as any).length
             : 1;
         invalidOrInaccessibleImagesSkipped += potentialImageCount;
-        continue; // Skip processing this post's images to prevent a crash
+        continue;
       }
 
       if (postImages.length === 0) continue;
 
-      // Parallel validation of images for the current post
       const validationPromises = postImages.map((url) =>
         isValidImageUrl(url).then((isValid) => ({ url, isValid }))
       );
-
-      // const validationTimer = TimeUtils.start(); // Optional: for per-post validation timing
       const validationResults = await Promise.allSettled(validationPromises);
-      // const validationDuration = TimeUtils.calculate(validationTimer);
-      // console.log(`Validated ${postImages.length} URLs for post @${post.author}/${post.permlink} in ${validationDuration.toFixed(2)}ms`);
 
       for (const result of validationResults) {
         if (result.status !== "fulfilled" || !result.value.isValid) {
@@ -384,8 +351,6 @@ export async function syncAndStoreHiveData(
           hive_tags: JSON.stringify(postTags),
         });
 
-        // Still prepare UI image data immediately for responsiveness if needed, or can be deferred
-        // For now, let's keep uiImages populated as before for consistency in return
         imageIdCounter++;
         uiImages.push({
           id: `img-${post.author}-${post.permlink}-${imageIdCounter}`,
@@ -402,19 +367,13 @@ export async function syncAndStoreHiveData(
           newImagesAddedToDb += batchResult.newImagesAdded;
           existingImagesSkipped +=
             recordsToInsert.length - batchResult.newImagesAdded;
-          recordsToInsert = []; // Reset for next batch
+          recordsToInsert = [];
         } else {
           invalidOrInaccessibleImagesSkipped++;
-          // if (result.status === 'rejected') {
-          //   console.warn(`Validation promise rejected for URL ${result.reason?.config?.url || 'unknown'} in post @${post.author}/${post.permlink}: ${result.reason}`);
-          // } else if (result.status === 'fulfilled' && !result.value.isValid) {
-          //   // console.log(`URL not valid: ${result.value.url}`);
-          // }
         }
       }
     }
 
-    // Insert any remaining records that didn't make a full batch
     if (recordsToInsert.length > 0) {
       try {
         const batchResult = await insertManyImages(recordsToInsert);
@@ -423,7 +382,7 @@ export async function syncAndStoreHiveData(
           recordsToInsert.length - batchResult.newImagesAdded;
       } catch (batchDbError) {
         console.error(`DB Error during final batch insert:`, batchDbError);
-        dbErrors += recordsToInsert.length; // Or a single error, depending on how you want to count
+        dbErrors += recordsToInsert.length;
       }
     }
 
@@ -448,9 +407,6 @@ export async function syncAndStoreHiveData(
       message: `Sincronización completada. ${newImagesAddedToDb} imágenes nuevas añadidas.`,
     };
   } catch (error) {
-    // If overallSyncTimer was initialized, log duration until error
-    // Note: overallSyncTimer might not be initialized if initializeDatabase() fails first.
-    // This simple check assumes it's more likely to fail during the main loop.
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(
       `Critical error during syncAndStoreHiveData: ${errorMessage}`,
@@ -459,7 +415,6 @@ export async function syncAndStoreHiveData(
     return {
       status: "error",
       message: `Error crítico durante la sincronización: ${errorMessage}`,
-      // Devolver los contadores acumulados hasta el momento del error puede ser útil
       newImagesAdded: newImagesAddedToDb,
       existingImagesSkipped: existingImagesSkipped,
       invalidOrInaccessibleImagesSkipped,

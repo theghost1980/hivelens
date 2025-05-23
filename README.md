@@ -71,6 +71,58 @@ curl "http://localhost:9002/api/tags"
 
 _(For more details on API parameters and response structure, please refer to the API root endpoint or future dedicated documentation.)_
 
+### Programmatic Usage Examples (ReactJS - useEffect and Fetch)
+
+These examples show how you might fetch data within a React component.
+
+**1. Fetch images by tag in a React component:**
+
+```jsx
+// In your React component
+import React, { useEffect, useState } from "react";
+
+useEffect(() => {
+  const fetchImagesByTag = async () => {
+    const tag = "#biking"; // Example tag, could come from props or state
+    const encodedTag = encodeURIComponent(tag);
+    try {
+      const response = await fetch(
+        `http://localhost:9002/api/search?tags=${encodedTag}&limit=10`
+      );
+      if (!response.ok) throw new Error("Network response was not ok");
+      const data = await response.json();
+      // setImagesState(data.images); // Update your component's state here
+      console.log("React - Images for tag #biking:", data.images);
+    } catch (error) {
+      console.error("React - Error fetching images:", error);
+    }
+  };
+  fetchImagesByTag();
+}, []); // Add 'tag' to dependencies if it can change: [tag]
+```
+
+**2. Get all available tags in a React component:**
+
+```jsx
+// In your React component
+import React, { useEffect, useState } from "react";
+
+useEffect(() => {
+  const fetchAllTags = async () => {
+    try {
+      const response = await fetch("http://localhost:9002/api/tags");
+      if (!response.ok) throw new Error("Network response was not ok");
+      const tags = await response.json();
+      // setAvailableTagsState(tags); // Update your component's state here
+      console.log("React - Available tags:", tags);
+    } catch (error) {
+      console.error("React - Error fetching tags:", error);
+    }
+  };
+  fetchAllTags();
+}, []); // Empty dependency array means this runs once on component mount
+```
+
 ### Technical Details
 
 #### Synchronization: Test Results (May 2024)
@@ -150,5 +202,57 @@ curl "http://localhost:9002/api/tags"
 ```
 
 _(Para más detalles sobre los parámetros de la API y la estructura de la respuesta, por favor consulta el endpoint raíz de la API o futura documentación dedicada.)_
+
+### Ejemplos de Uso Programático (ReactJS - useEffect y Fetch)
+
+Estos ejemplos muestran cómo podrías obtener datos dentro de un componente de React.
+
+**1. Buscar imágenes por tag en un componente de React:**
+
+```jsx
+// En tu componente de React
+import React, { useEffect, useState } from "react";
+
+useEffect(() => {
+  const buscarImagenesPorTag = async () => {
+    const tag = "#biking"; // Tag de ejemplo, podría venir de props o estado
+    const tagCodificado = encodeURIComponent(tag);
+    try {
+      const respuesta = await fetch(
+        `http://localhost:9002/api/search?tags=${tagCodificado}&limit=10`
+      );
+      if (!respuesta.ok) throw new Error("La respuesta de la red no fue ok");
+      const datos = await respuesta.json();
+      // setImagenesEstado(datos.images); // Actualiza el estado de tu componente aquí
+      console.log("React - Imágenes para el tag #biking:", datos.images);
+    } catch (error) {
+      console.error("React - Error buscando imágenes:", error);
+    }
+  };
+  buscarImagenesPorTag();
+}, []); // Añade 'tag' a las dependencias si puede cambiar: [tag]
+```
+
+**2. Obtener todos los tags disponibles en un componente de React:**
+
+```jsx
+// En tu componente de React
+import React, { useEffect, useState } from "react";
+
+useEffect(() => {
+  const obtenerTodosLosTags = async () => {
+    try {
+      const respuesta = await fetch("http://localhost:9002/api/tags");
+      if (!respuesta.ok) throw new Error("La respuesta de la red no fue ok");
+      const tags = await respuesta.json();
+      // setTagsDisponiblesEstado(tags); // Actualiza el estado de tu componente aquí
+      console.log("React - Tags disponibles:", tags);
+    } catch (error) {
+      console.error("React - Error obteniendo tags:", error);
+    }
+  };
+  obtenerTodosLosTags();
+}, []); // El array de dependencias vacío significa que se ejecuta una vez al montar el componente
+```
 
 _(La sección de Detalles Técnicos con los resultados de las pruebas de sincronización se encuentra en la versión en inglés más arriba)._

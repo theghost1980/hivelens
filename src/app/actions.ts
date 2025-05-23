@@ -4,25 +4,24 @@ import {
   countImagesInDateRange,
   getDistinctSyncedDates,
   getUniqueAvailableTags,
-  SearchFiltersDb,
   searchImagesInDb,
 } from "@/lib/database";
-import { syncAndStoreHiveData, type SyncAndStoreResult } from "@/lib/hivesql"; // Importar SyncAndStoreResult
-import type { HiveImage } from "@/lib/types";
+import { syncAndStoreHiveData } from "@/lib/hivesql";
+import type {
+  HiveImage,
+  SearchFiltersDb,
+  SyncAndStoreResult,
+} from "@/lib/types";
 
 export async function syncHiveData(
   startDate: string,
   endDate: string,
-  options?: { confirmed?: boolean } // Añadir el parámetro options
+  options?: { confirmed?: boolean }
 ): Promise<SyncAndStoreResult> {
-  // Actualizar el tipo de retorno
   console.log("Action: syncHiveData called...");
-
   try {
     const startDateISO = startDate;
     const endDateISO = endDate;
-
-    // Pasar el parámetro options a syncAndStoreHiveData
     const result = await syncAndStoreHiveData(
       startDateISO,
       endDateISO,
@@ -32,7 +31,7 @@ export async function syncHiveData(
   } catch (error) {
     console.error("Error in syncHiveData action:", error);
     return {
-      status: "error", // Asegurar que el objeto de error coincida con SyncErrorResult
+      status: "error",
       message:
         error instanceof Error ? error.message : "Unknown error during sync",
       newImagesAdded: 0,
@@ -48,11 +47,8 @@ export async function searchLocalImages(
   page: number,
   limit: number
 ): Promise<{ images: HiveImage[]; totalCount: number; currentPage: number }> {
-  // Log para verificar que la acción se está llamando
   console.log("SERVER ACTION: searchLocalImages - INICIO");
-
   console.log(
-    // Cambiado de console.debug a console.log para mayor visibilidad
     `Action: searchLocalImages called with filters: ${JSON.stringify(
       filters
     )}, page: ${page}, limit: ${limit}`
@@ -68,7 +64,6 @@ export async function searchLocalImages(
       offset
     );
     console.log(
-      // Cambiado de console.debug a console.log
       `Found ${foundImages.length} images for page ${page} (total: ${totalCount}) in local DB.`
     );
     return { images: foundImages, totalCount, currentPage: page };
@@ -116,6 +111,6 @@ export async function fetchAllUniqueTags(): Promise<string[]> {
     return tags;
   } catch (error) {
     console.error("Error in fetchAllUniqueTags action:", error);
-    return []; // Return empty array on error
+    return [];
   }
 }
