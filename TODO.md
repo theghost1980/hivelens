@@ -1,11 +1,17 @@
 # Hive Image Lens - Tareas Pendientes
 
+# TODO List - Hivelens Project
+
+- [ ] Implementar inserciones por lotes (batch inserts) en la base de datos SQLite para `syncAndStoreHiveData`.
+- Mover la BD a otra carpeta sola aparte por seguridad y para no tenerla dentro del repo. Preguntar a chat que opciones buenas tenemos para esto pensando en futuros respaldos y backups y e lcrecimiento posible que para un año seran como 1.8 GB a 5mg por dia.
+
 ## I. Análisis con Inteligencia Artificial (IA)
 
 Tecnología: (Opción B - Local/Más Simple)
 Librería Sugerida: TensorFlow.js con un modelo pre-entrenado para clasificación de imágenes (ej. MobileNet).
 
 Estrategia de Integración:
+
 1.  **Proceso Separado:** Implementar la lógica de análisis de IA como un proceso que no se ejecuta durante la sincronización inicial de Hive.
 2.  **Activación Manual:** Crear un mecanismo para activar el proceso de análisis de IA manualmente (ej. un script, una ruta API protegida, o un botón en una UI de administración futura).
 3.  **Procesamiento por Bloques:** El proceso de IA deberá tomar imágenes de la base de datos local con `ai_analysis_status = 'pending'`, analizarlas en bloques (ej. 10, 50, o 100 a la vez) para gestionar recursos y permitir la depuración.
@@ -28,15 +34,15 @@ Estrategia de Integración:
 Esta sección describe mejoras y consideraciones para cuando HiveLens actúe como un servicio de imágenes para sitios externos, ofreciendo transformaciones bajo demanda.
 
 1.  **Implementación de API Route (`/api/serve-image`):**
-    *   Diseñar y desarrollar la ruta API que acepte una URL de imagen externa y parámetros de transformación.
+    - Diseñar y desarrollar la ruta API que acepte una URL de imagen externa y parámetros de transformación.
 2.  **Librería de Procesamiento de Imágenes:**
-    *   Integrar una librería del lado del servidor (ej. **Sharp.js**) para realizar las transformaciones de imágenes (redimensionar, cambiar formato, ajustar calidad, etc.).
+    - Integrar una librería del lado del servidor (ej. **Sharp.js**) para realizar las transformaciones de imágenes (redimensionar, cambiar formato, ajustar calidad, etc.).
 3.  **Estrategia de Caché para Imágenes Transformadas:**
-    *   Diseñar e implementar un sistema de caché robusto para las imágenes procesadas.
-    *   Opciones: caché en disco, Redis, o almacenamiento en S3/Cloud Storage para las variantes generadas.
+    - Diseñar e implementar un sistema de caché robusto para las imágenes procesadas.
+    - Opciones: caché en disco, Redis, o almacenamiento en S3/Cloud Storage para las variantes generadas.
 4.  **Parámetros de Transformación en la API:**
-    *   Definir cómo se especificarán las transformaciones (ej. `?url=...&width=300&height=200&format=webp&quality=80`).
-    *   Considerar transformaciones básicas (tamaño, formato, calidad) y potencialmente avanzadas (recorte, marcas de agua) a largo plazo.
+    - Definir cómo se especificarán las transformaciones (ej. `?url=...&width=300&height=200&format=webp&quality=80`).
+    - Considerar transformaciones básicas (tamaño, formato, calidad) y potencialmente avanzadas (recorte, marcas de agua) a largo plazo.
 5.  **Seguridad y Límites de la API:**
-    *   Implementar medidas para prevenir el abuso (ej. rate limiting, validación de URLs de origen si es necesario).
-    *   Manejo de errores y timeouts al obtener imágenes externas.
+    - Implementar medidas para prevenir el abuso (ej. rate limiting, validación de URLs de origen si es necesario).
+    - Manejo de errores y timeouts al obtener imágenes externas.

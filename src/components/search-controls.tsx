@@ -10,12 +10,21 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { format } from "date-fns";
-import { CalendarIcon, RotateCcw, Search, User } from "lucide-react";
+import {
+  CalendarIcon,
+  RotateCcw,
+  Search,
+  Tag,
+  TextCursorInput,
+  User,
+} from "lucide-react";
 import { type FormEvent } from "react";
 import type { DateRange } from "react-day-picker";
 
 export interface SearchFilters {
   searchTerm: string;
+  title?: string;
+  tags?: string; // Could be a single tag or comma-separated
   author: string;
   dateRange?: DateRange;
 }
@@ -43,6 +52,14 @@ export function SearchControls({
     onFiltersChange({ ...filters, author: e.target.value });
   };
 
+  const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onFiltersChange({ ...filters, title: e.target.value });
+  };
+
+  const handleTagsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onFiltersChange({ ...filters, tags: e.target.value });
+  };
+
   const handleDateRangeChange = (newDateRange?: DateRange) => {
     onFiltersChange({ ...filters, dateRange: newDateRange });
   };
@@ -53,8 +70,15 @@ export function SearchControls({
   };
 
   const handleReset = () => {
-    onFiltersChange({ searchTerm: "", author: "", dateRange: undefined });
-    onSearch({ searchTerm: "", author: "", dateRange: undefined });
+    const resetFilters: SearchFilters = {
+      searchTerm: "",
+      title: "",
+      tags: "",
+      author: "",
+      dateRange: undefined,
+    };
+    onFiltersChange(resetFilters);
+    onSearch(resetFilters);
   };
 
   return (
@@ -62,7 +86,7 @@ export function SearchControls({
       onSubmit={handleSubmit}
       className="p-6 mb-8 bg-card border rounded-lg shadow-sm space-y-6"
     >
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-end">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 items-end">
         <div>
           <Label
             htmlFor="searchTerm"
@@ -78,6 +102,38 @@ export function SearchControls({
               placeholder="Keywords, title..."
               value={filters.searchTerm}
               onChange={handleSearchTermChange}
+              className="pl-10"
+            />
+          </div>
+        </div>
+        <div>
+          <Label htmlFor="title" className="block text-sm font-medium mb-1">
+            Specific Title
+          </Label>
+          <div className="relative">
+            <TextCursorInput className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+            <Input
+              id="title"
+              type="text"
+              placeholder="Exact or partial title"
+              value={filters.title || ""}
+              onChange={handleTitleChange}
+              className="pl-10"
+            />
+          </div>
+        </div>
+        <div>
+          <Label htmlFor="tags" className="block text-sm font-medium mb-1">
+            Tags (comma-sep.)
+          </Label>
+          <div className="relative">
+            <Tag className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+            <Input
+              id="tags"
+              type="text"
+              placeholder="e.g. nature, photo"
+              value={filters.tags || ""}
+              onChange={handleTagsChange}
               className="pl-10"
             />
           </div>

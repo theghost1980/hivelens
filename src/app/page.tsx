@@ -11,8 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 import { logAllDetectedHostnames } from "@/lib/image-config";
 import type { HiveImage } from "@/lib/types";
 import { format, parseISO } from "date-fns";
-import { DownloadCloud, Loader2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { DownloadCloud, Loader2, XCircle } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import {
   checkIfDateRangeHasData,
   fetchDistinctSyncedDates,
@@ -24,6 +24,8 @@ export default function HomePage() {
   const [allImages, setAllImages] = useState<HiveImage[]>([]);
   const [filters, setFilters] = useState<SearchFilters>({
     searchTerm: "",
+    title: "",
+    tags: "",
     author: "",
     dateRange: undefined,
   });
@@ -31,7 +33,61 @@ export default function HomePage() {
   const [isSearching, setIsSearching] = useState(false);
   const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false);
   const [syncedDays, setSyncedDays] = useState<Date[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalResults, setTotalResults] = useState(0);
   const { toast } = useToast();
+
+  const PAGE_SIZE = 100;
+
+  const handleSearch = useCallback(
+    async (searchFilters: SearchFilters, targetPage: number) => {
+      setIsSearching(true);
+
+      const dbFilters = {
+        searchTerm: searchFilters.searchTerm,
+        title: searchFilters.title,
+        tags: searchFilters.tags,
+        author: searchFilters.author,
+        dateFrom: searchFilters.dateRange?.from
+          ? format(searchFilters.dateRange.from, "yyyy-MM-dd")
+          : undefined,
+        dateTo: searchFilters.dateRange?.to
+          ? format(searchFilters.dateRange.to, "yyyy-MM-dd")
+          : undefined,
+      };
+
+      try {
+        const result = await searchLocalImages(
+          dbFilters,
+          targetPage,
+          PAGE_SIZE
+        );
+
+        setAllImages(result.images);
+        setTotalResults(result.totalCount);
+        setCurrentPage(result.currentPage);
+        setTotalPages(Math.ceil(result.totalCount / PAGE_SIZE));
+        setHasAttemptedLoad(true);
+      } catch (error) {
+        console.error("Error searching local data:", error);
+        setAllImages([]);
+        setTotalResults(0);
+        setCurrentPage(1);
+        setTotalPages(0);
+        toast({
+          title: "Search Error",
+          description:
+            String(error) || "Could not search local images. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsSearching(false);
+        setHasAttemptedLoad(true);
+      }
+    },
+    [toast]
+  );
 
   const handleSync = useCallback(async () => {
     setIsSyncing(true);
@@ -66,61 +122,46 @@ export default function HomePage() {
 
       const syncResult = await syncHiveData(startDateStr, endDateStr);
 
-      setAllImages(syncResult.images);
+      await handleSearch(filters, 1);
 
-      let description = `Found ${syncResult.images.length} images in this batch (display limited).`;
+      let description = `Sync complete. Found ${syncResult.images.length} raw images in this batch.`;
       description += `\nDB: ${syncResult.newImagesAdded} new, ${syncResult.existingImagesSkipped} duplicates skipped.`;
       description += `\n${syncResult.invalidOrInaccessibleImagesSkipped} invalid/broken URLs skipped.`;
       if (syncResult.dbErrors > 0)
         description += `\n${syncResult.dbErrors} DB errors.`;
       toast({
-        description: `Fetched ${syncResult.images.length} images from Hive.`,
+        title: "Sync Successful",
+        description: description,
       });
     } catch (error) {
       console.error("Error syncing data:", error);
       toast({
         title: "Sync Error",
-        description: "Could not fetch images from Hive. Please try again.",
+        description:
+          String(error) ||
+          "Could not fetch images from Hive. Please try again.",
         variant: "destructive",
       });
     } finally {
       setIsSyncing(false);
-      setHasAttemptedLoad(true);
     }
-  }, [toast, filters.dateRange]);
-
-  const handleSearch = useCallback(async (newFilters: SearchFilters) => {
-    setIsSearching(true);
-    const dbFilters = {
-      searchTerm: newFilters.searchTerm,
-      author: newFilters.author,
-      dateFrom: newFilters.dateRange?.from
-        ? format(newFilters.dateRange.from, "yyyy-MM-dd")
-        : undefined,
-      dateTo: newFilters.dateRange?.to
-        ? format(newFilters.dateRange.to, "yyyy-MM-dd")
-        : undefined,
-    };
-    try {
-      const images = await searchLocalImages(dbFilters);
-      setAllImages(images);
-    } catch (error) {
-      console.error("Error searching local data:", error);
-      setAllImages([]);
-      toast({
-        title: "Search Error",
-        description: "Could not search local images. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSearching(false);
-      setHasAttemptedLoad(true);
-    }
-  }, []);
+  }, [toast, filters.dateRange, handleSearch]);
 
   const handleFiltersChange = useCallback((newFilters: SearchFilters) => {
     setFilters(newFilters);
   }, []);
+
+  const handleClearResults = useCallback(() => {
+    setAllImages([]);
+    setCurrentPage(1);
+    setTotalPages(0);
+    setTotalResults(0);
+    // hasAttemptedLoad remains true, so the "No images found" message will appear.
+    toast({
+      title: "Results Cleared",
+      description: "The search results have been cleared from view.",
+    });
+  }, [toast]);
 
   useEffect(() => {
     return () => {
@@ -156,9 +197,7 @@ export default function HomePage() {
     loadSyncedDates();
   }, []);
 
-  const filteredImages = useMemo(() => {
-    return allImages;
-  }, [allImages]);
+  const filteredImages = allImages;
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
@@ -169,7 +208,9 @@ export default function HomePage() {
             <SearchControls
               filters={filters}
               onFiltersChange={handleFiltersChange}
-              onSearch={handleSearch}
+              onSearch={(currentSearchFilters) =>
+                handleSearch(currentSearchFilters, 1)
+              }
               isLoading={isSearching || isSyncing}
               syncedDays={syncedDays}
             />
@@ -226,8 +267,44 @@ export default function HomePage() {
           </div>
         ) : (
           filteredImages.length > 0 && (
-            <ImageResultsGrid images={filteredImages} />
+            <>
+              <div className="flex justify-end mb-4">
+                <Button
+                  onClick={handleClearResults}
+                  variant="outline"
+                  disabled={isSearching || isSyncing}
+                  size="sm"
+                >
+                  <XCircle className="mr-2 h-4 w-4" />
+                  Clear Results
+                </Button>
+              </div>
+              <ImageResultsGrid images={filteredImages} />
+            </>
           )
+        )}
+
+        {totalPages > 1 && !isSearching && !isSyncing && (
+          <div className="flex justify-center items-center space-x-2 mt-8 pb-8">
+            <Button
+              onClick={() => handleSearch(filters, currentPage - 1)}
+              disabled={currentPage <= 1}
+              variant="outline"
+            >
+              Previous
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Page {currentPage} of {totalPages} ({totalResults} results)
+            </span>
+            <Button
+              onClick={() => handleSearch(filters, currentPage + 1)}
+              disabled={currentPage >= totalPages}
+              variant="outline"
+            >
+              Next
+            </Button>
+            +{" "}
+          </div>
         )}
       </main>
       <footer className="py-6 text-center text-sm text-muted-foreground border-t">

@@ -1,6 +1,7 @@
 import path from "path";
 import { open, type Database } from "sqlite";
 import sqlite3 from "sqlite3";
+import { TimeUtils } from "./time.utils";
 import type { HiveImage } from "./types";
 
 const DB_FILE_PATH = path.join(process.cwd(), "hivelens.db");
@@ -52,15 +53,17 @@ export async function initializeDatabase(): Promise<void> {
     await db.exec(createTableQuery);
     console.log('Table "indexed_images" is ready.');
 
-    // Podríamos añadir índices aquí para mejorar el rendimiento de las búsquedas
-    // Ejemplo: CREATE INDEX IF NOT EXISTS idx_image_url ON indexed_images (image_url);
-    // Ejemplo: CREATE INDEX IF NOT EXISTS idx_hive_author ON indexed_images (hive_author);
-    // Ejemplo: CREATE INDEX IF NOT EXISTS idx_ai_status ON indexed_images (ai_analysis_status);
     await db.exec(
       "CREATE INDEX IF NOT EXISTS idx_image_url ON indexed_images (image_url);"
     );
     await db.exec(
       "CREATE INDEX IF NOT EXISTS idx_hive_author ON indexed_images (hive_author);"
+    );
+    await db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_hive_title ON indexed_images (LOWER(hive_title));"
+    );
+    await db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_hive_tags ON indexed_images (LOWER(hive_tags));"
     );
     await db.exec(
       "CREATE INDEX IF NOT EXISTS idx_ai_status ON indexed_images (ai_analysis_status);"
@@ -123,6 +126,8 @@ export async function insertImage(
 export interface SearchFiltersDb {
   searchTerm?: string;
   author?: string;
+  title?: string;
+  tags?: string; // Expecting comma-separated tags or a single tag
   dateFrom?: string;
   dateTo?: string;
 }
@@ -140,11 +145,14 @@ interface RawHiveDataRow {
 }
 
 export async function searchImagesInDb(
-  filters: SearchFiltersDb
-): Promise<HiveImage[]> {
+  filters: SearchFiltersDb,
+  limit: number,
+  offset: number
+): Promise<{ images: HiveImage[]; totalCount: number }> {
+  const searchStartTime = TimeUtils.start();
   const db = await getDb();
-  let query = `
-    SELECT 
+  let baseQuery = `FROM indexed_images WHERE 1=1`;
+  let selectClause = `SELECT 
       id, 
       image_url, 
       hive_author, 
@@ -154,55 +162,88 @@ export async function searchImagesInDb(
       hive_timestamp, 
       hive_tags, 
       ai_content_type, 
-      ai_features 
-    FROM indexed_images
-    WHERE 1=1
-  `;
-  const params: (string | number)[] = [];
+      ai_features `;
 
-  if (filters.searchTerm) {
-    query += `
-      AND (
-        hive_title LIKE ? OR 
-        hive_tags LIKE ? OR 
-        ai_content_type LIKE ? OR 
-        ai_features LIKE ?
+  const params: (string | number)[] = [];
+  let whereConditions = "";
+
+  if (filters.searchTerm?.trim()) {
+    whereConditions += `
+      AND (LOWER(hive_title) LIKE ? OR 
+        LOWER(hive_tags) LIKE ? OR 
+        LOWER(ai_content_type) LIKE ? OR 
+        LOWER(ai_features) LIKE ?)
       )
     `;
     const searchTermLike = `%${filters.searchTerm.toLowerCase()}%`;
-    params.push(searchTermLike, searchTermLike, searchTermLike, searchTermLike);
+    params.push(searchTermLike, searchTermLike, searchTermLike, searchTermLike); // 4 params for 4 LIKEs
   }
 
-  if (filters.author) {
-    query += ` AND hive_author LIKE ?`;
+  if (filters.title?.trim()) {
+    whereConditions += ` AND LOWER(hive_title) LIKE ?`;
+    params.push(`%${filters.title.toLowerCase()}%`);
+  }
+
+  if (filters.tags?.trim()) {
+    const tagsToSearch = filters.tags
+      .split(",")
+      .map((tag) => tag.trim().toLowerCase())
+      .filter((tag) => tag.length > 0);
+    if (tagsToSearch.length > 0) {
+      tagsToSearch.forEach((tag) => {
+        whereConditions += ` AND LOWER(hive_tags) LIKE ?`;
+        params.push(`%${tag}%`);
+      });
+    }
+  }
+
+  if (filters.author?.trim()) {
+    whereConditions += ` AND LOWER(hive_author) LIKE ?`;
     params.push(`%${filters.author.toLowerCase()}%`);
   }
 
   if (filters.dateFrom) {
-    query += ` AND hive_timestamp >= ?`;
+    whereConditions += ` AND hive_timestamp >= ?`;
     params.push(filters.dateFrom);
   }
 
   if (filters.dateTo) {
     const nextDay = new Date(filters.dateTo);
     nextDay.setDate(nextDay.getDate() + 1);
-    query += ` AND hive_timestamp < ?`;
+    whereConditions += ` AND hive_timestamp < ?`;
     params.push(nextDay.toISOString().split("T")[0]);
   }
 
-  query += ` ORDER BY hive_timestamp DESC`;
+  const countQuery = `SELECT COUNT(*) as count ${baseQuery} ${whereConditions}`;
+  const countResult = await db.get<{ count: number }>(countQuery, params);
+  const totalCount = countResult?.count || 0;
 
-  const rawResults = await db.all<RawHiveDataRow>(query, params);
+  if (totalCount === 0) {
+    return { images: [], totalCount: 0 };
+  }
+
+  const dataQuery = `${selectClause} ${baseQuery} ${whereConditions} ORDER BY hive_timestamp DESC LIMIT ? OFFSET ?`;
+  const dataParams = [...params, limit, offset];
+  const rawResults = await db.all<RawHiveDataRow>(dataQuery, dataParams);
 
   if (!Array.isArray(rawResults)) {
     console.error(
       "searchImagesInDb: db.all no devolvió un array. Se obtuvo:",
       rawResults
     );
-    return [];
+    return { images: [], totalCount: 0 };
   }
 
-  return rawResults.map(
+  const searchExecutionTime = TimeUtils.calculate(searchStartTime);
+  console.log(
+    `[DB Search] Filters: ${JSON.stringify(filters)}, Page: ${
+      offset / limit + 1
+    }, Limit: ${limit}. Found ${totalCount} total results. Query time: ${searchExecutionTime.toFixed(
+      2
+    )} ms.`
+  );
+
+  const images = rawResults.map(
     (row: RawHiveDataRow): HiveImage => ({
       id: String(row.id),
       imageUrl: row.image_url,
@@ -217,6 +258,8 @@ export async function searchImagesInDb(
       },
     })
   );
+
+  return { images, totalCount };
 }
 
 /**

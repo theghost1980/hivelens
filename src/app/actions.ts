@@ -41,16 +41,37 @@ export async function syncHiveData(
 }
 
 export async function searchLocalImages(
-  filters: SearchFiltersDb
-): Promise<HiveImage[]> {
-  console.log("Action: searchLocalImages called with filters:", filters);
+  filters: SearchFiltersDb,
+  page: number,
+  limit: number
+): Promise<{ images: HiveImage[]; totalCount: number; currentPage: number }> {
+  // Log para verificar que la acción se está llamando
+  console.log("SERVER ACTION: searchLocalImages - INICIO");
+
+  console.log(
+    // Cambiado de console.debug a console.log para mayor visibilidad
+    `Action: searchLocalImages called with filters: ${JSON.stringify(
+      filters
+    )}, page: ${page}, limit: ${limit}`
+  );
   try {
-    const images = await searchImagesInDb(filters);
-    console.log(`Found ${images.length} images in local DB.`);
-    return images;
+    const offset = (page - 1) * limit;
+    if (page < 1 || limit < 1) {
+      throw new Error("Page and limit must be positive integers.");
+    }
+    const { images: foundImages, totalCount } = await searchImagesInDb(
+      filters,
+      limit,
+      offset
+    );
+    console.log(
+      // Cambiado de console.debug a console.log
+      `Found ${foundImages.length} images for page ${page} (total: ${totalCount}) in local DB.`
+    );
+    return { images: foundImages, totalCount, currentPage: page };
   } catch (error) {
     console.error("Error in searchLocalImages action:", error);
-    return [];
+    return { images: [], totalCount: 0, currentPage: page };
   }
 }
 
