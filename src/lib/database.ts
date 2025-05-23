@@ -1,10 +1,16 @@
+import fs from "fs";
 import path from "path";
 import { open, type Database } from "sqlite";
 import sqlite3 from "sqlite3";
 import { TimeUtils } from "./time.utils";
 import type { HiveImage } from "./types";
 
-const DB_FILE_PATH = path.join(process.cwd(), "hivelens.db");
+const DB_FILE_PATH = path.join(
+  process.cwd(),
+  "..",
+  "BD-central",
+  "hivelens.db"
+);
 
 let dbInstance: Database | null = null;
 
@@ -14,12 +20,23 @@ export async function getDb(): Promise<Database> {
   }
 
   try {
+    const dbDir = path.dirname(DB_FILE_PATH);
+    if (!fs.existsSync(dbDir)) {
+      const errorMessage = `Error Crítico: El directorio de la base de datos '${dbDir}' no existe. Este directorio es necesario y debe contener el archivo 'hivelens.db'. Por favor, cree manualmente el directorio '${path.basename(
+        dbDir
+      )}' en la ubicación: '${path.dirname(dbDir)}'.`;
+      console.error(errorMessage);
+      throw new Error(errorMessage);
+    }
+
     const db = await open({
       filename: DB_FILE_PATH,
       driver: sqlite3.Database,
     });
 
-    console.log("Connected to the SQLite database.");
+    console.log(
+      `Conexión exitosa con la base de datos SQLite en: ${DB_FILE_PATH}`
+    );
     dbInstance = db;
     return db;
   } catch (error) {
@@ -123,6 +140,52 @@ export async function insertImage(
   }
 }
 
+/**
+ * Inserts multiple image records into the database in a single batch.
+ * Uses 'INSERT OR IGNORE' to skip duplicates based on the UNIQUE constraint on image_url.
+ * @param images An array of ImageRecord objects to insert.
+ * @returns A promise resolving to an object containing the number of new images actually added.
+ */
+export async function insertManyImages(
+  images: ImageRecord[]
+): Promise<{ newImagesAdded: number }> {
+  if (!images || images.length === 0) {
+    return { newImagesAdded: 0 };
+  }
+
+  const db = await getDb();
+  // Each image record has 7 fields + 1 for 'ai_analysis_status'
+  const placeholders = images
+    .map(() => "(?, ?, ?, ?, ?, ?, ?, 'pending')")
+    .join(", ");
+  const query = `
+    INSERT OR IGNORE INTO indexed_images 
+    (image_url, hive_author, hive_permlink, hive_post_url, hive_title, hive_timestamp, hive_tags, ai_analysis_status) 
+    VALUES ${placeholders}
+  `;
+
+  const values: any[] = [];
+  for (const image of images) {
+    values.push(
+      image.image_url,
+      image.hive_author,
+      image.hive_permlink,
+      image.hive_post_url,
+      image.hive_title,
+      image.hive_timestamp,
+      image.hive_tags
+    );
+  }
+
+  try {
+    const result = await db.run(query, values);
+    return { newImagesAdded: result.changes ?? 0 };
+  } catch (error: any) {
+    console.error("Error inserting multiple images:", error);
+    throw error; // Re-throw to be handled by the caller
+  }
+}
+
 export interface SearchFiltersDb {
   searchTerm?: string;
   author?: string;
@@ -176,7 +239,7 @@ export async function searchImagesInDb(
       )
     `;
     const searchTermLike = `%${filters.searchTerm.toLowerCase()}%`;
-    params.push(searchTermLike, searchTermLike, searchTermLike, searchTermLike); // 4 params for 4 LIKEs
+    params.push(searchTermLike, searchTermLike, searchTermLike, searchTermLike);
   }
 
   if (filters.title?.trim()) {
@@ -189,10 +252,14 @@ export async function searchImagesInDb(
       .split(",")
       .map((tag) => tag.trim().toLowerCase())
       .filter((tag) => tag.length > 0);
+
     if (tagsToSearch.length > 0) {
+      // Assuming AND logic: each tag provided must be present in the image's tags
       tagsToSearch.forEach((tag) => {
-        whereConditions += ` AND LOWER(hive_tags) LIKE ?`;
-        params.push(`%${tag}%`);
+        // Use json_each to check for the existence of the tag within the JSON array
+        // LOWER(value) ensures case-insensitive matching with the already lowercased 'tag'
+        whereConditions += ` AND EXISTS (SELECT 1 FROM json_each(indexed_images.hive_tags) WHERE LOWER(value) = ?)`;
+        params.push(tag); // Pass the already lowercased tag directly for exact match
       });
     }
   }
@@ -298,4 +365,27 @@ export async function getDistinctSyncedDates(): Promise<string[]> {
   const query = `SELECT DISTINCT SUBSTR(hive_timestamp, 1, 10) as sync_date FROM indexed_images ORDER BY sync_date DESC`;
   const results = await db.all<{ sync_date: string }[]>(query);
   return results.map((row) => row.sync_date);
+}
+
+/**
+ * Fetches a list of all unique tags from the indexed_images table.
+ * Tags are extracted from the JSON array in the hive_tags column.
+ * @returns A promise resolving to an array of unique tag strings, sorted alphabetically.
+ */
+export async function getUniqueAvailableTags(): Promise<string[]> {
+  const db = await getDb();
+  try {
+    // Use json_each to iterate over the array elements in the hive_tags column
+    // Use DISTINCT to get unique tag values
+    // ORDER BY value ASC to sort the tags alphabetically
+    const rows = await db.all<{ value: string }[]>(`
+      SELECT DISTINCT value
+      FROM indexed_images, json_each(indexed_images.hive_tags)
+      ORDER BY value ASC;
+    `);
+    return rows.map((row) => row.value);
+  } catch (error) {
+    console.error("Error fetching unique available tags:", error);
+    return []; // Return empty array on error
+  }
 }

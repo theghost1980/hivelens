@@ -1,7 +1,15 @@
 "use client";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+} from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -17,16 +25,18 @@ import {
   Tag,
   TextCursorInput,
   User,
+  X,
 } from "lucide-react";
-import { type FormEvent } from "react";
+import React, { useEffect, useState, type FormEvent } from "react";
 import type { DateRange } from "react-day-picker";
 
 export interface SearchFilters {
   searchTerm: string;
   title?: string;
-  tags?: string; // Could be a single tag or comma-separated
+  tags?: string;
   author: string;
   dateRange?: DateRange;
+  searchInBody?: boolean;
 }
 
 interface SearchControlsProps {
@@ -35,29 +45,46 @@ interface SearchControlsProps {
   onFiltersChange: (filters: SearchFilters) => void;
   syncedDays?: Date[];
   isLoading?: boolean;
+  availableTags: string[];
 }
 
-export function SearchControls({
+function SearchControlsComponent({
+  availableTags,
   onSearch,
   filters,
   onFiltersChange,
   syncedDays,
   isLoading,
 }: SearchControlsProps) {
+  const [isTagsComboboxOpen, setIsTagsComboboxOpen] = useState(false);
+  const [tagsComboboxInputValue, setTagsComboboxInputValue] = useState("");
+
+  const [searchTerm, setSearchTerm] = useState(filters.searchTerm || "");
+  const [title, setTitle] = useState(filters.title || "");
+  const [author, setAuthor] = useState(filters.author || "");
+
+  useEffect(() => {
+    setSearchTerm(filters.searchTerm || "");
+    setTitle(filters.title || "");
+    setAuthor(filters.author || "");
+  }, [filters.searchTerm, filters.title, filters.author]);
+
   const handleSearchTermChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onFiltersChange({ ...filters, searchTerm: e.target.value });
+    const newValue = e.target.value;
+    setSearchTerm(newValue);
+    onFiltersChange({ ...filters, searchTerm: newValue });
   };
 
   const handleAuthorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onFiltersChange({ ...filters, author: e.target.value });
+    const newValue = e.target.value;
+    setAuthor(newValue);
+    onFiltersChange({ ...filters, author: newValue });
   };
 
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onFiltersChange({ ...filters, title: e.target.value });
-  };
-
-  const handleTagsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onFiltersChange({ ...filters, tags: e.target.value });
+    const newValue = e.target.value;
+    setTitle(newValue);
+    onFiltersChange({ ...filters, title: newValue });
   };
 
   const handleDateRangeChange = (newDateRange?: DateRange) => {
@@ -81,6 +108,25 @@ export function SearchControls({
     onSearch(resetFilters);
   };
 
+  const selectedTagsArray = (filters.tags || "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag);
+
+  const handleTagSelectFromCombobox = (tag: string) => {
+    const newTagsArray = [...selectedTagsArray];
+    if (!newTagsArray.includes(tag)) {
+      newTagsArray.push(tag);
+      onFiltersChange({ ...filters, tags: newTagsArray.join(", ") });
+    }
+    setIsTagsComboboxOpen(false);
+  };
+
+  const handleTagRemoveBadge = (tagToRemove: string) => {
+    const newTagsArray = selectedTagsArray.filter((tag) => tag !== tagToRemove);
+    onFiltersChange({ ...filters, tags: newTagsArray.join(", ") });
+  };
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -100,7 +146,7 @@ export function SearchControls({
               id="searchTerm"
               type="text"
               placeholder="Keywords, title..."
-              value={filters.searchTerm}
+              value={searchTerm}
               onChange={handleSearchTermChange}
               className="pl-10"
             />
@@ -116,7 +162,7 @@ export function SearchControls({
               id="title"
               type="text"
               placeholder="Exact or partial title"
-              value={filters.title || ""}
+              value={title}
               onChange={handleTitleChange}
               className="pl-10"
             />
@@ -126,17 +172,75 @@ export function SearchControls({
           <Label htmlFor="tags" className="block text-sm font-medium mb-1">
             Tags (comma-sep.)
           </Label>
-          <div className="relative">
-            <Tag className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-            <Input
-              id="tags"
-              type="text"
-              placeholder="e.g. nature, photo"
-              value={filters.tags || ""}
-              onChange={handleTagsChange}
-              className="pl-10"
-            />
-          </div>
+          <Popover
+            open={isTagsComboboxOpen}
+            onOpenChange={setIsTagsComboboxOpen}
+          >
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                role="combobox"
+                aria-expanded={isTagsComboboxOpen}
+                className="w-full justify-start text-left font-normal h-10"
+              >
+                <Tag className="mr-2 h-4 w-4 text-muted-foreground" />
+                {selectedTagsArray.length > 0
+                  ? `${selectedTagsArray.length} tag(s) seleccionados`
+                  : "Seleccionar tags..."}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+              <Command>
+                <CommandInput
+                  placeholder="Buscar o añadir tag..."
+                  className="h-9"
+                  value={tagsComboboxInputValue}
+                  onValueChange={setTagsComboboxInputValue}
+                />
+                <CommandEmpty>
+                  No se encontraron tags. Puedes añadir uno nuevo.
+                </CommandEmpty>
+                <CommandGroup className="max-h-60 overflow-y-auto">
+                  {availableTags.map((tag) => (
+                    <CommandItem
+                      key={tag}
+                      value={tag}
+                      onSelect={(currentValue: string) => {
+                        const originalTag = availableTags.find(
+                          (t) => t.toLowerCase() === currentValue.toLowerCase()
+                        );
+                        if (originalTag) {
+                          handleTagSelectFromCombobox(originalTag);
+                        }
+                      }}
+                    >
+                      {tag}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </Command>
+            </PopoverContent>
+          </Popover>
+          {selectedTagsArray.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {selectedTagsArray.map((tag) => (
+                <Badge
+                  key={tag}
+                  variant="secondary"
+                  className="flex items-center"
+                >
+                  {tag}
+                  <button
+                    type="button"
+                    className="ml-1 rounded-full outline-none ring-offset-background focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                    onClick={() => handleTagRemoveBadge(tag)}
+                  >
+                    <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
         <div>
           <Label htmlFor="author" className="block text-sm font-medium mb-1">
@@ -148,7 +252,7 @@ export function SearchControls({
               id="author"
               type="text"
               placeholder="Hive username"
-              value={filters.author}
+              value={author}
               onChange={handleAuthorChange}
               className="pl-10"
             />
@@ -193,9 +297,7 @@ export function SearchControls({
                 selected={filters.dateRange}
                 onSelect={handleDateRangeChange}
                 modifiers={{ synced: syncedDays || [] }}
-                modifiersClassNames={{
-                  synced: "day-synced",
-                }}
+                modifiersClassNames={{ synced: "day-synced" }}
                 numberOfMonths={2}
               />
             </PopoverContent>
@@ -225,3 +327,5 @@ export function SearchControls({
     </form>
   );
 }
+
+export const SearchControls = React.memo(SearchControlsComponent);

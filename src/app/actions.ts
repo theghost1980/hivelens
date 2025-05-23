@@ -3,35 +3,38 @@
 import {
   countImagesInDateRange,
   getDistinctSyncedDates,
+  getUniqueAvailableTags,
   SearchFiltersDb,
   searchImagesInDb,
 } from "@/lib/database";
-import { syncAndStoreHiveData } from "@/lib/hivesql";
+import { syncAndStoreHiveData, type SyncAndStoreResult } from "@/lib/hivesql"; // Importar SyncAndStoreResult
 import type { HiveImage } from "@/lib/types";
 
 export async function syncHiveData(
   startDate: string,
-  endDate: string
-): Promise<{
-  images: HiveImage[];
-  newImagesAdded: number;
-  existingImagesSkipped: number;
-  invalidOrInaccessibleImagesSkipped: number;
-  dbErrors: number;
-  message?: string;
-}> {
+  endDate: string,
+  options?: { confirmed?: boolean } // Añadir el parámetro options
+): Promise<SyncAndStoreResult> {
+  // Actualizar el tipo de retorno
   console.log("Action: syncHiveData called...");
 
   try {
     const startDateISO = startDate;
     const endDateISO = endDate;
 
-    const result = await syncAndStoreHiveData(startDateISO, endDateISO);
+    // Pasar el parámetro options a syncAndStoreHiveData
+    const result = await syncAndStoreHiveData(
+      startDateISO,
+      endDateISO,
+      options
+    );
     return result;
   } catch (error) {
     console.error("Error in syncHiveData action:", error);
     return {
-      images: [],
+      status: "error", // Asegurar que el objeto de error coincida con SyncErrorResult
+      message:
+        error instanceof Error ? error.message : "Unknown error during sync",
       newImagesAdded: 0,
       existingImagesSkipped: 0,
       invalidOrInaccessibleImagesSkipped: 0,
@@ -103,5 +106,16 @@ export async function fetchDistinctSyncedDates(): Promise<string[]> {
   } catch (error) {
     console.error("Error fetching distinct synced dates:", error);
     return [];
+  }
+}
+
+export async function fetchAllUniqueTags(): Promise<string[]> {
+  console.log("Action: fetchAllUniqueTags called...");
+  try {
+    const tags = await getUniqueAvailableTags();
+    return tags;
+  } catch (error) {
+    console.error("Error in fetchAllUniqueTags action:", error);
+    return []; // Return empty array on error
   }
 }

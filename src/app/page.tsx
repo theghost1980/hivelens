@@ -7,18 +7,21 @@ import {
   type SearchFilters,
 } from "@/components/search-controls";
 import { Button } from "@/components/ui/button";
+import { useDebounce } from "@/hooks/use-debounce";
 import { useToast } from "@/hooks/use-toast";
-import { logAllDetectedHostnames } from "@/lib/image-config";
 import type { HiveImage } from "@/lib/types";
 import { format, parseISO } from "date-fns";
 import { DownloadCloud, Loader2, XCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
   checkIfDateRangeHasData,
+  fetchAllUniqueTags,
   fetchDistinctSyncedDates,
   searchLocalImages,
   syncHiveData,
 } from "./actions";
+
+const PAGE_SIZE = 100;
 
 export default function HomePage() {
   const [allImages, setAllImages] = useState<HiveImage[]>([]);
@@ -36,28 +39,40 @@ export default function HomePage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [totalResults, setTotalResults] = useState(0);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+
   const { toast } = useToast();
 
-  const PAGE_SIZE = 100;
+  // 👇 Central debounce
+  const debouncedFilters = useDebounce(filters, 10);
+
+  const handleFiltersChange = useCallback((newFilters: SearchFilters) => {
+    setFilters((prev) => {
+      const same = JSON.stringify(prev) === JSON.stringify(newFilters);
+      return same ? prev : newFilters;
+    });
+    setCurrentPage(1);
+  }, []);
 
   const handleSearch = useCallback(
     async (searchFilters: SearchFilters, targetPage: number) => {
       setIsSearching(true);
 
-      const dbFilters = {
-        searchTerm: searchFilters.searchTerm,
-        title: searchFilters.title,
-        tags: searchFilters.tags,
-        author: searchFilters.author,
-        dateFrom: searchFilters.dateRange?.from
-          ? format(searchFilters.dateRange.from, "yyyy-MM-dd")
-          : undefined,
-        dateTo: searchFilters.dateRange?.to
-          ? format(searchFilters.dateRange.to, "yyyy-MM-dd")
-          : undefined,
-      };
-
       try {
+        const dbFilters = {
+          searchTerm: searchFilters.searchTerm,
+          title: searchFilters.title,
+          tags: searchFilters.tags,
+          author: searchFilters.author,
+          dateFrom: searchFilters.dateRange?.from
+            ? format(searchFilters.dateRange.from, "yyyy-MM-dd")
+            : undefined,
+          dateTo: searchFilters.dateRange?.to
+            ? format(searchFilters.dateRange.to, "yyyy-MM-dd")
+            : undefined,
+        };
+
         const result = await searchLocalImages(
           dbFilters,
           targetPage,
@@ -77,17 +92,36 @@ export default function HomePage() {
         setTotalPages(0);
         toast({
           title: "Search Error",
-          description:
-            String(error) || "Could not search local images. Please try again.",
+          description: String(error) || "Search failed. Please try again.",
           variant: "destructive",
         });
       } finally {
         setIsSearching(false);
-        setHasAttemptedLoad(true);
       }
     },
     [toast]
   );
+
+  useEffect(() => {
+    const minChars = 3;
+
+    const textFieldsValid = ["searchTerm", "author", "title", "tags"].every(
+      (key) => {
+        const val = (debouncedFilters as any)[key];
+        if (!val) return true;
+        if (key === "tags") {
+          return val
+            .split(",")
+            .every((t: string) => t.trim().length >= minChars);
+        }
+        return val.length >= minChars || val.length === 0;
+      }
+    );
+
+    if (!initialLoadComplete || !textFieldsValid) return;
+
+    handleSearch(debouncedFilters, currentPage);
+  }, [debouncedFilters, currentPage, handleSearch, initialLoadComplete]);
 
   const handleSync = useCallback(async () => {
     setIsSyncing(true);
@@ -95,10 +129,9 @@ export default function HomePage() {
       if (!filters.dateRange?.from || !filters.dateRange?.to) {
         toast({
           title: "Date Range Required",
-          description: "Please select a start and end date to sync.",
+          description: "Please select a date range to sync.",
           variant: "destructive",
         });
-        setIsSyncing(false);
         return;
       }
 
@@ -106,115 +139,76 @@ export default function HomePage() {
       const endDateStr = format(filters.dateRange.to, "yyyy-MM-dd");
 
       const hasData = await checkIfDateRangeHasData(startDateStr, endDateStr);
-      if (hasData) {
-        const userConfirmed = window.confirm(
-          "Data for this date range already exists in the local DB. Do you want to sync again to fetch potential new entries or updates?"
-        );
-        if (!userConfirmed) {
-          setIsSyncing(false);
-          toast({
-            title: "Sync Cancelled",
-            description: "Synchronization was cancelled by the user.",
-          });
-          return;
-        }
+      if (hasData && !window.confirm("Data already exists. Sync anyway?")) {
+        return;
       }
 
-      const syncResult = await syncHiveData(startDateStr, endDateStr);
+      const response = await syncHiveData(startDateStr, endDateStr);
+      if (response.status === "confirmation_required") {
+        if (!window.confirm(response.message)) return;
 
-      await handleSearch(filters, 1);
-
-      let description = `Sync complete. Found ${syncResult.images.length} raw images in this batch.`;
-      description += `\nDB: ${syncResult.newImagesAdded} new, ${syncResult.existingImagesSkipped} duplicates skipped.`;
-      description += `\n${syncResult.invalidOrInaccessibleImagesSkipped} invalid/broken URLs skipped.`;
-      if (syncResult.dbErrors > 0)
-        description += `\n${syncResult.dbErrors} DB errors.`;
-      toast({
-        title: "Sync Successful",
-        description: description,
-      });
-    } catch (error) {
-      console.error("Error syncing data:", error);
+        const finalResult = await syncHiveData(startDateStr, endDateStr, {
+          confirmed: true,
+        });
+        if (finalResult.status === "success") {
+          let description = `Sincronización completada. ${finalResult.newImagesAdded} imágenes nuevas añadidas.`;
+          description += `\n${finalResult.existingImagesSkipped} duplicados omitidos.`;
+          description += `\n${finalResult.invalidOrInaccessibleImagesSkipped} URLs inválidas/rotas omitidas.`;
+          console.log({ description });
+        }
+        if (finalResult.status === "success") {
+          await handleSearch(filters, 1);
+        }
+      } else if (response.status === "success") {
+        await handleSearch(filters, 1);
+      }
+    } catch (err) {
+      console.error(err);
       toast({
         title: "Sync Error",
-        description:
-          String(error) ||
-          "Could not fetch images from Hive. Please try again.",
+        description: String(err),
         variant: "destructive",
       });
     } finally {
       setIsSyncing(false);
     }
-  }, [toast, filters.dateRange, handleSearch]);
+  }, [filters.dateRange, toast, handleSearch]);
 
-  const handleFiltersChange = useCallback((newFilters: SearchFilters) => {
-    setFilters(newFilters);
+  useEffect(() => {
+    fetchDistinctSyncedDates().then((dates) => {
+      const parsed = dates
+        .map((d) => parseISO(d))
+        .filter((d) => d instanceof Date && !isNaN(d.getTime()));
+      setSyncedDays(parsed);
+      setInitialLoadComplete(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    fetchAllUniqueTags().then(setAvailableTags);
   }, []);
 
   const handleClearResults = useCallback(() => {
     setAllImages([]);
-    setCurrentPage(1);
     setTotalPages(0);
     setTotalResults(0);
-    // hasAttemptedLoad remains true, so the "No images found" message will appear.
-    toast({
-      title: "Results Cleared",
-      description: "The search results have been cleared from view.",
-    });
+    setCurrentPage(1);
+    toast({ title: "Results cleared." });
   }, [toast]);
-
-  useEffect(() => {
-    return () => {
-      logAllDetectedHostnames();
-    };
-  }, []);
-
-  useEffect(() => {
-    async function loadSyncedDates() {
-      const dateStrings = await fetchDistinctSyncedDates();
-      console.log("[HomePage] Raw date strings from DB:", dateStrings);
-      const dates = dateStrings
-        .map((originalString) => ({
-          originalString,
-          parsedDate: parseISO(originalString),
-        }))
-        .filter((item) => {
-          const isValid =
-            item.parsedDate instanceof Date &&
-            !isNaN(item.parsedDate.getTime());
-          if (!isValid) {
-            console.warn(
-              `[HomePage] Invalid date string encountered or parseISO failed for: ${item.originalString}`
-            );
-          }
-          return isValid;
-        })
-        .map((item) => item.parsedDate);
-
-      console.log("[HomePage] Parsed Date objects for syncedDays:", dates);
-      setSyncedDays(dates);
-    }
-    loadSyncedDates();
-  }, []);
-
-  const filteredImages = allImages;
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
       <AppHeader />
       <main className="flex-grow container mx-auto px-4 py-8">
         <div className="flex flex-col sm:flex-row justify-between items-center mb-8 gap-4">
-          <div className="flew-grow">
-            <SearchControls
-              filters={filters}
-              onFiltersChange={handleFiltersChange}
-              onSearch={(currentSearchFilters) =>
-                handleSearch(currentSearchFilters, 1)
-              }
-              isLoading={isSearching || isSyncing}
-              syncedDays={syncedDays}
-            />
-          </div>
+          <SearchControls
+            filters={filters}
+            onFiltersChange={handleFiltersChange}
+            onSearch={() => handleSearch(filters, 1)}
+            availableTags={availableTags}
+            isLoading={isSearching || isSyncing}
+            syncedDays={syncedDays}
+          />
           <Button
             onClick={handleSync}
             disabled={
@@ -229,63 +223,36 @@ export default function HomePage() {
             ) : (
               <DownloadCloud className="mr-2 h-4 w-4" />
             )}
-            {isSyncing ? "Syncing with Hive..." : "Sync with Hive"}
+            {isSyncing ? "Syncing..." : "Sync with Hive"}
           </Button>
         </div>
 
         {isSearching || isSyncing ? (
-          <div className="flex flex-col items-center justify-center text-center py-12 text-muted-foreground">
-            <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-            <p className="text-lg text-muted-foreground">
-              {isSyncing
-                ? "Syncing images from Hive..."
-                : "Searching local index..."}
-            </p>
+          <div className="flex justify-center py-12">
+            <Loader2 className="h-10 w-10 animate-spin" />
           </div>
         ) : !hasAttemptedLoad && allImages.length === 0 ? (
-          <div className="text-center py-10 border-2 border-dashed border-muted rounded-lg">
-            <DownloadCloud className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-            <h2 className="text-xl font-semibold text-foreground mb-2">
-              Welcome to Hive Image Lens!
-            </h2>
-            <p className="text-muted-foreground mb-1">
-              To get started, please select a date range above.
-            </p>
-            <p className="text-muted-foreground mb-4">
-              Then, click "Sync with Hive" to load image metadata into your
-              local index.
-            </p>
-            <p className="text-muted-foreground">
-              After syncing, use "Search Images" to explore the indexed images.
-            </p>
+          <div className="text-center py-10 text-muted-foreground">
+            Welcome. Please select a date range and click sync to begin.
           </div>
-        ) : hasAttemptedLoad && allImages.length === 0 ? (
-          <div className="text-center py-10">
-            <p className="text-lg text-muted-foreground">
-              No images found matching your criteria.
-            </p>
+        ) : allImages.length === 0 ? (
+          <div className="text-center py-10 text-muted-foreground">
+            No images match your filters.
           </div>
         ) : (
-          filteredImages.length > 0 && (
-            <>
-              <div className="flex justify-end mb-4">
-                <Button
-                  onClick={handleClearResults}
-                  variant="outline"
-                  disabled={isSearching || isSyncing}
-                  size="sm"
-                >
-                  <XCircle className="mr-2 h-4 w-4" />
-                  Clear Results
-                </Button>
-              </div>
-              <ImageResultsGrid images={filteredImages} />
-            </>
-          )
+          <>
+            <div className="flex justify-end mb-4">
+              <Button onClick={handleClearResults} size="sm" variant="outline">
+                <XCircle className="mr-2 h-4 w-4" />
+                Clear Results
+              </Button>
+            </div>
+            <ImageResultsGrid images={allImages} />
+          </>
         )}
 
-        {totalPages > 1 && !isSearching && !isSyncing && (
-          <div className="flex justify-center items-center space-x-2 mt-8 pb-8">
+        {totalPages > 1 && (
+          <div className="flex justify-center gap-2 mt-8">
             <Button
               onClick={() => handleSearch(filters, currentPage - 1)}
               disabled={currentPage <= 1}
@@ -294,7 +261,7 @@ export default function HomePage() {
               Previous
             </Button>
             <span className="text-sm text-muted-foreground">
-              Page {currentPage} of {totalPages} ({totalResults} results)
+              Page {currentPage} of {totalPages}
             </span>
             <Button
               onClick={() => handleSearch(filters, currentPage + 1)}
@@ -303,7 +270,6 @@ export default function HomePage() {
             >
               Next
             </Button>
-            +{" "}
           </div>
         )}
       </main>

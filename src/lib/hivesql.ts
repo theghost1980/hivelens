@@ -9,7 +9,11 @@
 
 import dotenv from "dotenv";
 import sql from "mssql";
-import { initializeDatabase, insertImage, type ImageRecord } from "./database"; // Importar utilidades de DB
+import {
+  initializeDatabase,
+  insertManyImages,
+  type ImageRecord,
+} from "./database"; // Importar utilidades de DB
 import { TimeUtils } from "./time.utils";
 import { HiveImage } from "./types";
 
@@ -184,16 +188,75 @@ async function isValidImageUrl(url: string): Promise<boolean> {
     return false;
   }
 }
-export async function syncAndStoreHiveData(
-  startDateISO: string,
-  endDateISO: string
-): Promise<{
+
+// --- Tipos de Resultado para syncAndStoreHiveData ---
+export interface SyncSuccessResult {
+  status: "success";
   images: HiveImage[];
   newImagesAdded: number;
   existingImagesSkipped: number;
   invalidOrInaccessibleImagesSkipped: number;
   dbErrors: number;
-}> {
+  message: string;
+}
+
+export interface SyncConfirmationRequiredResult {
+  status: "confirmation_required";
+  estimatedDays: number;
+  estimatedTimePerDayMinutes: number; // El tiempo X que definirás
+  totalEstimatedTimeMinutes: number;
+  message: string;
+}
+
+export interface SyncErrorResult {
+  status: "error";
+  message: string;
+  // Podríamos incluir contadores parciales si el error ocurre a mitad de camino
+  newImagesAdded?: number;
+  existingImagesSkipped?: number;
+  invalidOrInaccessibleImagesSkipped?: number;
+  dbErrors?: number;
+}
+
+export type SyncAndStoreResult =
+  | SyncSuccessResult
+  | SyncConfirmationRequiredResult
+  | SyncErrorResult;
+
+const ESTIMATED_TIME_PER_DAY_MINUTES = 40;
+
+function calculateDaysBetween(
+  isoDateStr1: string,
+  isoDateStr2: string
+): number {
+  const date1 = new Date(isoDateStr1);
+  const date2 = new Date(isoDateStr2);
+  // La query es WHERE created >= startDate AND created < endDate
+  // Por lo tanto, la diferencia directa en días es lo que necesitamos.
+  const diffTime = date2.getTime() - date1.getTime(); // endDate es posterior
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return Math.max(1, diffDays); // Asegurar al menos 1 día si el rango es muy corto o el mismo día
+}
+
+function formatMinutesToHoursAndMinutes(totalMinutes: number): string {
+  if (totalMinutes < 0) return "0 minutos"; // Manejar caso negativo aunque no debería ocurrir
+  if (totalMinutes < 60) {
+    return `${totalMinutes} minuto${totalMinutes === 1 ? "" : "s"}`;
+  }
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  let formattedString = `${hours} hora${hours > 1 ? "s" : ""}`;
+  if (minutes > 0) {
+    formattedString += `, ${minutes} minuto${minutes > 1 ? "s" : ""}`;
+  }
+  return formattedString;
+}
+
+export async function syncAndStoreHiveData(
+  startDateISO: string,
+  endDateISO: string,
+  options?: { confirmed?: boolean }
+): Promise<SyncAndStoreResult> {
   console.log(
     `Starting Hive data sync & store from ${startDateISO} to ${endDateISO}...`
   );
@@ -219,8 +282,34 @@ export async function syncAndStoreHiveData(
   let dbErrors = 0;
   let invalidOrInaccessibleImagesSkipped = 0;
   const uiImages: HiveImage[] = [];
+  let recordsToInsert: ImageRecord[] = [];
+  const BATCH_SIZE = 100; // Configurable batch size
 
   try {
+    // Paso de confirmación
+    if (!options?.confirmed) {
+      const estimatedDays = calculateDaysBetween(startDateISO, endDateISO);
+      const totalEstimatedTimeMinutes =
+        estimatedDays * ESTIMATED_TIME_PER_DAY_MINUTES;
+      const formattedTotalTime = formatMinutesToHoursAndMinutes(
+        totalEstimatedTimeMinutes
+      );
+      const message =
+        `Últimas pruebas: 1 día aprox. ${ESTIMATED_TIME_PER_DAY_MINUTES} minutos.\n\n` +
+        `Total del rango deseado: ${estimatedDays} día(s) (${startDateISO} a ${endDateISO}) tomará aprox. ${totalEstimatedTimeMinutes} minutos (${formattedTotalTime}).\n\n` +
+        `¿Deseas continuar?`;
+
+      console.log(`[CONFIRMATION_REQUIRED] ${message}`);
+      return {
+        status: "confirmation_required",
+        estimatedDays,
+        estimatedTimePerDayMinutes: ESTIMATED_TIME_PER_DAY_MINUTES,
+        totalEstimatedTimeMinutes,
+        message,
+      };
+    }
+
+    console.log("Confirmación recibida, procediendo con la sincronización...");
     await initializeDatabase();
     const overallSyncTimer = TimeUtils.start(); // Moved after DB init for more accurate sync timing
     const { results: rawPosts, time } =
@@ -280,39 +369,40 @@ export async function syncAndStoreHiveData(
       // console.log(`Validated ${postImages.length} URLs for post @${post.author}/${post.permlink} in ${validationDuration.toFixed(2)}ms`);
 
       for (const result of validationResults) {
-        if (result.status === "fulfilled" && result.value.isValid) {
-          const imageUrl = result.value.url;
+        if (result.status !== "fulfilled" || !result.value.isValid) {
+          invalidOrInaccessibleImagesSkipped++;
+          continue;
+        }
+        const imageUrl = result.value.url;
+        recordsToInsert.push({
+          image_url: imageUrl,
+          hive_author: post.author,
+          hive_permlink: post.permlink,
+          hive_post_url: post.postUrl,
+          hive_title: post.title,
+          hive_timestamp: post.timestamp.toISOString(),
+          hive_tags: JSON.stringify(postTags),
+        });
 
-          const dbRecord: ImageRecord = {
-            image_url: imageUrl,
-            hive_author: post.author,
-            hive_permlink: post.permlink,
-            hive_post_url: post.postUrl,
-            hive_title: post.title,
-            hive_timestamp: post.timestamp.toISOString(), // Ensure timestamp is ISO string
-            hive_tags: JSON.stringify(postTags),
-          };
+        // Still prepare UI image data immediately for responsiveness if needed, or can be deferred
+        // For now, let's keep uiImages populated as before for consistency in return
+        imageIdCounter++;
+        uiImages.push({
+          id: `img-${post.author}-${post.permlink}-${imageIdCounter}`,
+          imageUrl: imageUrl,
+          author: post.author,
+          timestamp: post.timestamp.toISOString(),
+          title: post.title || `Image from ${post.author}`,
+          postUrl: post.postUrl,
+          tags: postTags,
+        });
 
-          try {
-            const insertResult = await insertImage(dbRecord);
-            if (insertResult.new) newImagesAddedToDb++;
-            else existingImagesSkipped++;
-
-            imageIdCounter++;
-            const uiImage: HiveImage = {
-              id: `img-${post.author}-${post.permlink}-${imageIdCounter}`,
-              imageUrl: imageUrl,
-              author: post.author,
-              timestamp: post.timestamp.toISOString(), // Ensure timestamp is ISO string
-              title: post.title || `Image from ${post.author}`,
-              postUrl: post.postUrl,
-              tags: postTags,
-            };
-            uiImages.push(uiImage);
-          } catch (dbError) {
-            console.error(`DB Error for ${imageUrl}:`, dbError);
-            dbErrors++;
-          }
+        if (recordsToInsert.length >= BATCH_SIZE) {
+          const batchResult = await insertManyImages(recordsToInsert);
+          newImagesAddedToDb += batchResult.newImagesAdded;
+          existingImagesSkipped +=
+            recordsToInsert.length - batchResult.newImagesAdded;
+          recordsToInsert = []; // Reset for next batch
         } else {
           invalidOrInaccessibleImagesSkipped++;
           // if (result.status === 'rejected') {
@@ -321,6 +411,19 @@ export async function syncAndStoreHiveData(
           //   // console.log(`URL not valid: ${result.value.url}`);
           // }
         }
+      }
+    }
+
+    // Insert any remaining records that didn't make a full batch
+    if (recordsToInsert.length > 0) {
+      try {
+        const batchResult = await insertManyImages(recordsToInsert);
+        newImagesAddedToDb += batchResult.newImagesAdded;
+        existingImagesSkipped +=
+          recordsToInsert.length - batchResult.newImagesAdded;
+      } catch (batchDbError) {
+        console.error(`DB Error during final batch insert:`, batchDbError);
+        dbErrors += recordsToInsert.length; // Or a single error, depending on how you want to count
       }
     }
 
@@ -336,24 +439,31 @@ export async function syncAndStoreHiveData(
     );
 
     return {
+      status: "success",
       images: uiImages.slice(0, 200),
       newImagesAdded: newImagesAddedToDb,
       existingImagesSkipped: existingImagesSkipped,
       invalidOrInaccessibleImagesSkipped,
       dbErrors,
+      message: `Sincronización completada. ${newImagesAddedToDb} imágenes nuevas añadidas.`,
     };
   } catch (error) {
     // If overallSyncTimer was initialized, log duration until error
     // Note: overallSyncTimer might not be initialized if initializeDatabase() fails first.
     // This simple check assumes it's more likely to fail during the main loop.
-    // A more robust solution would check if overallSyncTimer is defined.
-    console.error("Critical error during syncAndStoreHiveData:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(
+      `Critical error during syncAndStoreHiveData: ${errorMessage}`,
+      error
+    );
     return {
-      images: [],
+      status: "error",
+      message: `Error crítico durante la sincronización: ${errorMessage}`,
+      // Devolver los contadores acumulados hasta el momento del error puede ser útil
       newImagesAdded: newImagesAddedToDb,
       existingImagesSkipped: existingImagesSkipped,
       invalidOrInaccessibleImagesSkipped,
-      dbErrors: dbErrors + 1,
+      dbErrors,
     };
   }
 }
