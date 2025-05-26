@@ -172,12 +172,26 @@ export default function HomePage() {
             description: finalResult.message,
             variant: "destructive",
           });
+        } else if (finalResult.status === "sync_in_progress") {
+          toast({
+            title: "Sync Already Active",
+            description: finalResult.details || finalResult.message,
+            variant: "default", // Or "warning" if you prefer
+            duration: 10000, // Longer duration for more info
+          });
         }
       } else if (response.status === "success") {
         await handleSearch(filters, 1);
+      } else if (response.status === "sync_in_progress") {
+        toast({
+          title: "Sync Already Active",
+          description: response.details || response.message,
+          variant: "default", // Or "warning" if you prefer
+          duration: 10000, // Longer duration for more info
+        });
       }
     } catch (err) {
-      console.error(err);
+      console.error("Error during sync process:", err);
       toast({
         title: "Sync Error",
         description: String(err),
@@ -256,19 +270,41 @@ export default function HomePage() {
               </AccordionTrigger>
               <AccordionContent className="text-sm text-muted-foreground space-y-2 pt-2">
                 <p>
-                  The synchronization process connects to the HIVE blockchain to
-                  fetch posts within the selected date range.
+                  Hivelens connects to the HIVE blockchain to fetch posts within
+                  your selected date range. For each post, it extracts image
+                  URLs, validates them, and stores metadata (author, post link,
+                  tags, image URL) in a local database for fast searching.
                 </p>
                 <p>
-                  For each post, it extracts image URLs, validates them to
-                  ensure they are accessible and actual images, and then stores
-                  the image metadata (like author, post link, tags, and the
-                  image URL itself) in a local SQLite database.
+                  <strong>Important:</strong> To ensure data integrity and
+                  optimal performance,
+                  <strong>
+                    only one synchronization process can be active at a time.
+                  </strong>
                 </p>
                 <p>
-                  If you select a large date range, this process can take some
-                  time (approx. 40 minutes per day of data). You will be asked
-                  for confirmation if the estimated time is significant.
+                  If you attempt to start a sync while another is already
+                  running, the system will inform you:
+                </p>
+                <ul className="list-disc list-inside pl-4 space-y-1">
+                  <li>
+                    Who initiated the current sync (e.g., a username or
+                    "Sistema").
+                  </li>
+                  <li>When it started.</li>
+                  <li>The date range being processed.</li>
+                  <li>An estimated duration and when it might finish.</li>
+                </ul>
+                <p>
+                  This way, you'll always know the status and can wait for the
+                  current process to complete.
+                </p>
+                <p>
+                  Syncing a large date range can take time (currently estimated
+                  at
+                  <strong> approx. 32 minutes per day of data</strong> on our
+                  server). You'll always be asked for confirmation if the
+                  estimated time is significant before proceeding.
                 </p>
                 <p>
                   Once synced, you can search these images instantly using the

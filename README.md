@@ -142,6 +142,20 @@ Results from a synchronization test for **1 full day** of HIVE blockchain data:
 - **Estimated Time per Day:** Based on this test, an estimate of **40 minutes per day** is used to warn the user before initiating long synchronizations.
 - **Estimated DB Growth:** ~9.2 MB per day of synchronized data. This implies an annual growth of approximately 3.2 - 3.4 GB if every day of the year is synchronized.
 
+## Working Methodology & Dev Logs
+
+This project follows an iterative development approach. Progress, key decisions, features implemented, and bugs fixed are documented in development logs. This practice helps in tracking the evolution of the project and maintaining a clear record of changes.
+
+You can find detailed session logs here:
+
+- **[Development Logs (DEVLOGS.md)](./DEVLOGS.md)**
+
+This methodology ensures transparency and provides a historical context for the development process.
+
+## TODO
+
+See [TODO.md](./TODO.md) for a list of planned features and improvements.
+
 ---
 
 ## Español
@@ -256,3 +270,17 @@ useEffect(() => {
 ```
 
 _(La sección de Detalles Técnicos con los resultados de las pruebas de sincronización se encuentra en la versión en inglés más arriba)._
+
+## Metodología de Trabajo y Logs de Desarrollo
+
+Este proyecto sigue un enfoque de desarrollo iterativo. El progreso, las decisiones clave, las características implementadas y los errores corregidos se documentan en logs de desarrollo. Esta práctica ayuda a rastrear la evolución del proyecto y a mantener un registro claro de los cambios.
+
+Puedes encontrar logs detallados de las sesiones aquí:
+
+- **[Logs de Desarrollo (DEVLOGS.md)](./DEVLOGS.md)**
+
+Esta metodología asegura la transparencia y proporciona un contexto histórico para el proceso de desarrollo.
+
+## PENDIENTES
+
+Consulta [TODO.md](./TODO.md) para ver una lista de las características y mejoras planificadas.

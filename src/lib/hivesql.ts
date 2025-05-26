@@ -6,15 +6,19 @@
  * - testConnection - Tests the connection to HiveSQL with a simple query.
  */
 import dotenv from "dotenv";
-import fs from "fs";
 import sql from "mssql";
-import { DB_FILE_PATH, initializeDatabase, insertManyImages } from "./database";
+import {
+  getDatabaseSizeMB, // Importar la nueva función
+  initializeDatabase,
+  insertManyImages,
+} from "./database";
 import { TimeUtils } from "./time.utils";
 import {
   HiveImage,
   HivePostCommentForSync,
   ImageRecord,
   SyncAndStoreResult,
+  SyncInProgressError, // Importar desde types.ts
 } from "./types";
 if (!process.env.HIVE_HOST) {
   dotenv.config({ path: ".env" });
@@ -55,6 +59,28 @@ const sqlConfig: sql.config = {
   },
   requestTimeout: 120000,
 };
+
+// --- Inicio: Lógica de bloqueo de Sincronización ---
+interface SyncDetails {
+  username: string;
+  initiatedAt: string; // ISO string
+  dateRange: { from: string; to: string };
+  estimatedDurationMs: number;
+}
+let currentSyncDetails: SyncDetails | null = null;
+const ESTIMATED_TIME_PER_DAY_MINUTES = 32;
+const MAX_DB_SIZE_BYTES = 4 * 1024 * 1024 * 1024; // 4 GB
+const MAX_DB_SIZE_MB = MAX_DB_SIZE_BYTES / (1024 * 1024);
+const QUOTA_EXCEEDED_MESSAGE =
+  "Please contact admin of the index @theghost1980 in HIVE or discord as the DB has reached maximum allowed quota!";
+
+function formatDateRangeForMessage(
+  dateRange: { from: string; to: string } | string
+): string {
+  if (typeof dateRange === "string") return dateRange;
+  return `el periodo desde ${dateRange.from} hasta ${dateRange.to}`;
+}
+// --- Fin: Lógica de bloqueo de Sincronización ---
 
 /**
  * Executes a SQL query and returns the results along with execution time.
@@ -178,12 +204,6 @@ async function isValidImageUrl(url: string): Promise<boolean> {
   }
 }
 
-const ESTIMATED_TIME_PER_DAY_MINUTES = 40;
-const MAX_DB_SIZE_BYTES = 4 * 1024 * 1024 * 1024; // 4 GB
-const MAX_DB_SIZE_MB = MAX_DB_SIZE_BYTES / (1024 * 1024);
-const QUOTA_EXCEEDED_MESSAGE =
-  "Please contact admin of the index @theghost1980 in HIVE or discord as the DB has reached maximum allowed quota!";
-
 function calculateDaysBetween(
   isoDateStr1: string,
   isoDateStr2: string
@@ -209,14 +229,51 @@ function formatMinutesToHoursAndMinutes(totalMinutes: number): string {
   return formattedString;
 }
 
+// --- Inicio: Función para obtener estado de sincronización ---
+export async function getSyncStatus() {
+  if (!currentSyncDetails) {
+    return null;
+  }
+  const { username, initiatedAt, dateRange, estimatedDurationMs } =
+    currentSyncDetails;
+  const initiatedAtDate = new Date(initiatedAt);
+  const estimatedCompletionTime = new Date(
+    initiatedAtDate.getTime() + estimatedDurationMs
+  );
+  const durationMinutes = Math.round(estimatedDurationMs / (60 * 1000));
+  const formattedDuration = formatMinutesToHoursAndMinutes(durationMinutes);
+
+  return {
+    username,
+    initiatedAt: initiatedAtDate.toISOString(),
+    dateRange: dateRange,
+    estimatedDurationMinutes: durationMinutes,
+    estimatedCompletionTime: estimatedCompletionTime.toISOString(),
+    message: `${username} inició la sincronización a las ${initiatedAtDate.toLocaleString()} para ${formatDateRangeForMessage(
+      dateRange
+    )}. Durará aproximadamente ${formattedDuration} y podría finalizar alrededor de las ${estimatedCompletionTime.toLocaleString()}.`,
+  };
+}
+// --- Fin: Función para obtener estado de sincronización ---
+
 export async function syncAndStoreHiveData(
   startDateISO: string,
   endDateISO: string,
-  options?: { confirmed?: boolean }
+  options?: { confirmed?: boolean; initiatorUsername?: string }
 ): Promise<SyncAndStoreResult> {
   console.log(
     `Starting Hive data sync & store from ${startDateISO} to ${endDateISO}...`
   );
+  // Verificar si ya hay una sincronización en curso ANTES de la lógica de confirmación
+  if (currentSyncDetails && options?.confirmed) {
+    // Solo bloquea si se intenta iniciar una nueva confirmada
+    console.warn(
+      "Attempt to start a confirmed sync while another is in progress."
+    );
+    throw new SyncInProgressError(
+      "Un proceso de sincronización ya está activo y confirmado."
+    );
+  }
 
   const query = `
     SELECT
@@ -242,54 +299,84 @@ export async function syncAndStoreHiveData(
   let recordsToInsert: ImageRecord[] = [];
   const BATCH_SIZE = 100;
 
-  try {
-    // Verificar el tamaño de la base de datos antes de cualquier otra cosa
-    if (fs.existsSync(DB_FILE_PATH)) {
-      const stats = fs.statSync(DB_FILE_PATH);
-      const currentDbSizeBytes = stats.size;
-      const currentDbSizeMB = currentDbSizeBytes / (1024 * 1024);
+  const currentDbSizeMBValue = getDatabaseSizeMB(); // Obtener el tamaño una vez
 
-      if (currentDbSizeBytes > MAX_DB_SIZE_BYTES) {
-        console.warn(
-          `DB size quota exceeded: ${currentDbSizeMB.toFixed(
-            2
-          )}MB / ${MAX_DB_SIZE_MB}MB`
-        );
-        return {
-          status: "quota_exceeded",
-          message: QUOTA_EXCEEDED_MESSAGE,
-          currentDbSizeMB: parseFloat(currentDbSizeMB.toFixed(2)),
-          maxDbSizeMB: MAX_DB_SIZE_MB,
-        };
-      }
-    }
-    if (!options?.confirmed) {
-      const estimatedDays = calculateDaysBetween(startDateISO, endDateISO);
-      const totalEstimatedTimeMinutes =
-        estimatedDays * ESTIMATED_TIME_PER_DAY_MINUTES;
-      const formattedTotalTime = formatMinutesToHoursAndMinutes(
-        totalEstimatedTimeMinutes
+  // Verificar el tamaño de la base de datos antes de cualquier otra cosa
+  if (currentDbSizeMBValue !== null) {
+    const currentDbSizeBytes = currentDbSizeMBValue * 1024 * 1024; // Re-calcular bytes para la comparación
+
+    if (currentDbSizeBytes > MAX_DB_SIZE_BYTES) {
+      console.warn(
+        `DB size quota exceeded: ${currentDbSizeMBValue.toFixed(
+          2
+        )}MB / ${MAX_DB_SIZE_MB}MB`
       );
-      const message =
-        `Últimas pruebas: 1 día aprox. ${ESTIMATED_TIME_PER_DAY_MINUTES} minutos.\n\n` +
-        `Total del rango deseado: ${estimatedDays} día(s) (${startDateISO} a ${endDateISO}) tomará aprox. ${totalEstimatedTimeMinutes} minutos (${formattedTotalTime}).\n\n` +
-        `¿Deseas continuar?`;
-
-      console.log(`[CONFIRMATION_REQUIRED] ${message}`);
       return {
-        status: "confirmation_required",
-        estimatedDays,
-        estimatedTimePerDayMinutes: ESTIMATED_TIME_PER_DAY_MINUTES,
-        totalEstimatedTimeMinutes,
-        message,
+        status: "quota_exceeded",
+        message: QUOTA_EXCEEDED_MESSAGE,
+        currentDbSizeMB: currentDbSizeMBValue,
+        maxDbSizeMB: MAX_DB_SIZE_MB,
       };
     }
+  }
+  if (!options?.confirmed) {
+    const estimatedDays = calculateDaysBetween(startDateISO, endDateISO);
+    const totalEstimatedTimeMinutes =
+      estimatedDays * ESTIMATED_TIME_PER_DAY_MINUTES;
+    const formattedTotalTime = formatMinutesToHoursAndMinutes(
+      totalEstimatedTimeMinutes
+    );
+    const message =
+      `Últimas pruebas: 1 día aprox. ${ESTIMATED_TIME_PER_DAY_MINUTES} minutos.\n\n` +
+      `Total del rango deseado: ${estimatedDays} día(s) (${startDateISO} a ${endDateISO}) tomará aprox. ${totalEstimatedTimeMinutes} minutos (${formattedTotalTime}).\n\n` +
+      `¿Deseas continuar?`;
 
-    console.log("Confirmación recibida, procediendo con la sincronización...");
+    console.log(`[CONFIRMATION_REQUIRED] ${message}`);
+    return {
+      status: "confirmation_required",
+      estimatedDays,
+      estimatedTimePerDayMinutes: ESTIMATED_TIME_PER_DAY_MINUTES,
+      totalEstimatedTimeMinutes,
+      message,
+      currentDbSizeMB: currentDbSizeMBValue ?? undefined,
+    };
+  }
+
+  // Si llegamos aquí y options.confirmed es true, procedemos a adquirir el bloqueo y sincronizar.
+  console.log(
+    "Confirmación recibida (o no requerida), procediendo con la sincronización..."
+  );
+
+  const initiatedAt = new Date();
+  const estimatedDaysForLock = calculateDaysBetween(startDateISO, endDateISO);
+  const totalEstimatedTimeMinutesForLock =
+    estimatedDaysForLock * ESTIMATED_TIME_PER_DAY_MINUTES;
+  const estimatedDurationMsForLock =
+    totalEstimatedTimeMinutesForLock * 60 * 1000;
+
+  currentSyncDetails = {
+    username: options?.initiatorUsername || "Sistema",
+    initiatedAt: initiatedAt.toISOString(),
+    dateRange: { from: startDateISO, to: endDateISO },
+    estimatedDurationMs: estimatedDurationMsForLock,
+  };
+  console.log(
+    `Bloqueo adquirido por ${
+      currentSyncDetails.username
+    }. Iniciando sincronización de HIVE para ${formatDateRangeForMessage(
+      currentSyncDetails.dateRange
+    )} a las ${initiatedAt.toLocaleString()}. Duración estimada: ${formatMinutesToHoursAndMinutes(
+      totalEstimatedTimeMinutesForLock
+    )}.`
+  );
+
+  const overallSyncTimer = TimeUtils.start(); // Iniciar temporizador después de adquirir el bloqueo
+
+  try {
     await initializeDatabase();
-    const overallSyncTimer = TimeUtils.start();
     const { results: rawPosts, time } =
       await executeQuery<HivePostCommentForSync>(query);
+
     console.log(
       `Fetched ${rawPosts.length} raw posts from HiveSQL in ${time}ms.`
     );
@@ -368,8 +455,8 @@ export async function syncAndStoreHiveData(
           existingImagesSkipped +=
             recordsToInsert.length - batchResult.newImagesAdded;
           recordsToInsert = [];
-        } else {
-          invalidOrInaccessibleImagesSkipped++;
+          // } else { // Esta línea estaba incorrecta, no debería haber un else aquí para invalidOrInaccessibleImagesSkipped
+          //   invalidOrInaccessibleImagesSkipped++;
         }
       }
     }
@@ -385,7 +472,6 @@ export async function syncAndStoreHiveData(
         dbErrors += recordsToInsert.length;
       }
     }
-
     console.log(`Sync & Store finished. Processed ${rawPosts.length} posts.`);
     console.log(
       `DB: ${newImagesAddedToDb} new added, ${existingImagesSkipped} existing skipped, ${invalidOrInaccessibleImagesSkipped} invalid/inaccessible skipped, ${dbErrors} DB errors.`
@@ -405,6 +491,7 @@ export async function syncAndStoreHiveData(
       invalidOrInaccessibleImagesSkipped,
       dbErrors,
       message: `Sincronización completada. ${newImagesAddedToDb} imágenes nuevas añadidas.`,
+      currentDbSizeMB: currentDbSizeMBValue ?? undefined,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -412,6 +499,8 @@ export async function syncAndStoreHiveData(
       `Critical error during syncAndStoreHiveData: ${errorMessage}`,
       error
     );
+    // Si el error es SyncInProgressError, ya se lanzó antes y no debería llegar aquí
+    // a menos que sea un error dentro de la lógica de sincronización después de adquirir el bloqueo.
     return {
       status: "error",
       message: `Error crítico durante la sincronización: ${errorMessage}`,
@@ -419,6 +508,15 @@ export async function syncAndStoreHiveData(
       existingImagesSkipped: existingImagesSkipped,
       invalidOrInaccessibleImagesSkipped,
       dbErrors,
+      currentDbSizeMB: currentDbSizeMBValue ?? undefined,
     };
+  } finally {
+    if (currentSyncDetails) {
+      // Solo liberar si el bloqueo fue adquirido por esta instancia
+      console.log(
+        `Liberando bloqueo. Proceso de sincronización (iniciado por ${currentSyncDetails.username}) finalizado.`
+      );
+      currentSyncDetails = null;
+    }
   }
 }

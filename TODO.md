@@ -2,11 +2,16 @@
 
 # TODO List - Hivelens Project
 
-- [ ] **(Alta Prioridad)** Implementar un mecanismo de bloqueo (semáforo) para `syncAndStoreHiveData` para prevenir sincronizaciones concurrentes y notificar al usuario si un proceso ya está activo.
 - [ ] **(Prioridad Media/Alta)** Investigar y, si es factible con la arquitectura actual, implementar una forma de mostrar el estado o progreso de una sincronización en curso. Esto podría ser un indicador simple (ej. "Sincronización en progreso desde X") o algo más detallado si se implementa un sistema de estado/notificaciones.
 
 - [ ] Planificar e implementar una estrategia de respaldos (backups) para la base de datos SQLite, considerando su crecimiento estimado.
 - [ ] Implementar funcionalidad de backup de la BD (usando el comando `.backup` de SQLite o la API de backup online si la librería lo permite).
+- Invetigar sobre geolocalizacion para las imagenes:
+  Usa una librería de Node.js para leer EXIF:
+
+exif-reader: Una librería ligera y eficiente para leer datos EXIF de buffers de imágenes.
+exiftool.js: Si necesitas una capacidad más avanzada similar a ExifTool (una herramienta de línea de comandos popular), esta librería puede ser una opción, aunque puede ser más pesada.
+piexifjs: Útil para leer y manipular EXIF en JavaScript.
 
 ## I. Análisis con Inteligencia Artificial (IA)
 

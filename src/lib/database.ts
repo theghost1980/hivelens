@@ -52,6 +52,19 @@ export async function getDb(): Promise<Database> {
   }
 }
 
+/**
+ * Gets the current size of the database file in megabytes.
+ * @returns The size of the database in MB, or null if the file doesn't exist.
+ */
+export function getDatabaseSizeMB(): number | null {
+  if (fs.existsSync(DB_FILE_PATH)) {
+    const stats = fs.statSync(DB_FILE_PATH);
+    return parseFloat((stats.size / (1024 * 1024)).toFixed(2));
+  }
+  console.warn("[DB] DB_FILE_PATH not found when trying to get database size.");
+  return null;
+}
+
 export async function initializeDatabase(): Promise<void> {
   const db = await getDb();
 
@@ -206,14 +219,8 @@ export async function searchImagesInDb(
   let whereConditions = "";
 
   if (filters.searchTerm?.trim()) {
-    whereConditions += `
-      AND (LOWER(hive_title) LIKE ? OR 
-        LOWER(hive_tags) LIKE ? OR 
-        LOWER(ai_content_type) LIKE ? OR 
-        LOWER(ai_features) LIKE ?)
-      )
-    `;
     const searchTermLike = `%${filters.searchTerm.toLowerCase()}%`;
+    whereConditions += ` AND (LOWER(hive_title) LIKE ? OR LOWER(hive_tags) LIKE ? OR LOWER(ai_content_type) LIKE ? OR LOWER(ai_features) LIKE ?)`;
     params.push(searchTermLike, searchTermLike, searchTermLike, searchTermLike);
   }
 

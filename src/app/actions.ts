@@ -2,42 +2,61 @@
 
 import {
   countImagesInDateRange,
+  getDatabaseSizeMB,
   getDistinctSyncedDates,
   getUniqueAvailableTags,
   searchImagesInDb,
 } from "@/lib/database";
-import { syncAndStoreHiveData } from "@/lib/hivesql";
-import type {
+import { getSyncStatus, syncAndStoreHiveData } from "@/lib/hivesql";
+import {
   HiveImage,
   SearchFiltersDb,
   SyncAndStoreResult,
+  SyncInProgressError, // Importar desde types.ts
 } from "@/lib/types";
 
 export async function syncHiveData(
   startDate: string,
   endDate: string,
-  options?: { confirmed?: boolean }
+  options?: { confirmed?: boolean; initiatorUsername?: string } // Añadir initiatorUsername a las opciones
 ): Promise<SyncAndStoreResult> {
-  console.log("Action: syncHiveData called...");
+  console.log(
+    `Action: syncHiveData called with options: ${JSON.stringify(options)}`
+  );
   try {
     const startDateISO = startDate;
     const endDateISO = endDate;
     const result = await syncAndStoreHiveData(
       startDateISO,
       endDateISO,
-      options
+      options // Pasar todas las opciones, incluyendo initiatorUsername
     );
     return result;
   } catch (error) {
+    if (error instanceof SyncInProgressError) {
+      const dbSize = getDatabaseSizeMB();
+      const statusDetails = await getSyncStatus(); // Añadir await
+      console.warn(
+        "Action: Sync already in progress - ",
+        statusDetails?.message
+      );
+      return {
+        currentDbSizeMB: dbSize ?? undefined,
+        status: "sync_in_progress",
+        message: "La sincronización ya está en progreso.", // Mensaje principal
+        details: statusDetails?.message, // Mensaje detallado para el usuario
+        syncStatus: statusDetails, // Objeto de estado completo
+      };
+    }
     console.error("Error in syncHiveData action:", error);
+    const dbSize = getDatabaseSizeMB();
     return {
+      currentDbSizeMB: dbSize ?? undefined,
       status: "error",
       message:
         error instanceof Error ? error.message : "Unknown error during sync",
-      newImagesAdded: 0,
-      existingImagesSkipped: 0,
-      invalidOrInaccessibleImagesSkipped: 0,
-      dbErrors: 1,
+      // Para errores genéricos, los contadores de imágenes usualmente serían 0
+      dbErrors: 0, // Si el error es antes de la interacción con DB, dbErrors debería ser 0
     };
   }
 }

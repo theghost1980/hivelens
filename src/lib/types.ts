@@ -84,6 +84,7 @@ export interface SyncSuccessResult {
   invalidOrInaccessibleImagesSkipped: number;
   dbErrors: number;
   message: string;
+  currentDbSizeMB?: number;
 }
 
 export interface SyncConfirmationRequiredResult {
@@ -92,6 +93,7 @@ export interface SyncConfirmationRequiredResult {
   estimatedTimePerDayMinutes: number;
   totalEstimatedTimeMinutes: number;
   message: string;
+  currentDbSizeMB?: number;
 }
 export interface SyncErrorResult {
   status: "error";
@@ -100,13 +102,40 @@ export interface SyncErrorResult {
   existingImagesSkipped?: number;
   invalidOrInaccessibleImagesSkipped?: number;
   dbErrors?: number;
+  currentDbSizeMB?: number;
+}
+
+export interface SyncInProgressDetailedErrorResult {
+  status: "sync_in_progress";
+  message: string; // Mensaje genérico como "La sincronización ya está en progreso."
+  details?: string; // Mensaje detallado de getSyncStatus
+  syncStatus?: {
+    // Objeto de estado completo de getSyncStatus
+    username: string;
+    initiatedAt: string;
+    dateRange: { from: string; to: string } | string;
+    estimatedDurationMinutes: number;
+    estimatedCompletionTime: string;
+  } | null;
+  currentDbSizeMB?: number;
+}
+
+// Definición del Error Personalizado
+export class SyncInProgressError extends Error {
+  public statusCode: number;
+  constructor(message: string) {
+    super(message);
+    this.name = "SyncInProgressError";
+    this.statusCode = 409; // Conflict
+  }
 }
 
 export type SyncAndStoreResult =
   | SyncSuccessResult
   | SyncConfirmationRequiredResult
   | SyncErrorResult
-  | SyncQuotaExceededResult;
+  | SyncQuotaExceededResult
+  | SyncInProgressDetailedErrorResult; // Añadido el nuevo tipo de resultado
 
 export interface SyncQuotaExceededResult {
   status: "quota_exceeded";
