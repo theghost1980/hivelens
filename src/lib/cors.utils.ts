@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Lista de orígenes permitidos para desarrollo en localhost.
-// Los desarrolladores pueden agregar aquí los puertos que usan para sus frontends.
-const ALLOWED_LOCALHOST_ORIGINS: string[] = [
+const DEVELOPMENT_WHITELISTED_ORIGINS: string[] = [
   "http://localhost:3000", // Ejemplo: Create React App, Next.js frontend dev
   "http://localhost:3001",
   "http://localhost:5173", // Ejemplo: Vite
   "http://localhost:9002", // Añadido para permitir el origen de tu cliente
   "http://localhost:8080", // Ejemplo: Vue CLI
   "http://localhost:4200", // Ejemplo: Angular CLI
-  // Agrega otros puertos comunes que usen tus desarrolladores
 ];
 
 /**
@@ -21,16 +18,43 @@ const ALLOWED_LOCALHOST_ORIGINS: string[] = [
 export function getCorsHeaders(request: NextRequest | Request): Headers {
   const requestOrigin = request.headers.get("origin");
   const corsHeaders = new Headers();
+  let originAllowed = false;
+  let effectiveAllowOriginHeaderValue: string | null = null;
+  corsHeaders.set("Vary", "Origin");
 
-  if (requestOrigin && ALLOWED_LOCALHOST_ORIGINS.includes(requestOrigin)) {
-    corsHeaders.set("Access-Control-Allow-Origin", requestOrigin);
-  } else if (process.env.NODE_ENV !== "production" && !requestOrigin) {
-    // Para herramientas como Postman en desarrollo donde el Origin puede no estar presente,
-    // permitir cualquier origen. Sé cauteloso con '*' en producción.
-    corsHeaders.set("Access-Control-Allow-Origin", "*");
+  if (process.env.NODE_ENV === "production") {
+    if (requestOrigin && requestOrigin.startsWith("https://")) {
+      effectiveAllowOriginHeaderValue = requestOrigin;
+      originAllowed = true;
+    }
+  } else {
+    if (
+      requestOrigin &&
+      DEVELOPMENT_WHITELISTED_ORIGINS.includes(requestOrigin)
+    ) {
+      effectiveAllowOriginHeaderValue = requestOrigin;
+      originAllowed = true;
+    } else if (!requestOrigin) {
+      effectiveAllowOriginHeaderValue = "*";
+      originAllowed = true;
+    }
   }
-  // Puedes agregar más cabeceras aquí si son comunes a todas las respuestas no-preflight
-  // por ejemplo, 'Access-Control-Expose-Headers' si necesitas exponer alguna cabecera al cliente.
+
+  if (originAllowed && effectiveAllowOriginHeaderValue) {
+    corsHeaders.set(
+      "Access-Control-Allow-Origin",
+      effectiveAllowOriginHeaderValue
+    );
+    corsHeaders.set(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PUT, DELETE, OPTIONS"
+    );
+    corsHeaders.set(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, X-Requested-With"
+    );
+    corsHeaders.set("Access-Control-Max-Age", "86400");
+  }
 
   return corsHeaders;
 }
@@ -43,33 +67,6 @@ export function getCorsHeaders(request: NextRequest | Request): Headers {
 export function handleCorsPreflight(
   request: NextRequest | Request
 ): NextResponse {
-  const requestOrigin = request.headers.get("origin");
-  const preflightHeaders = new Headers();
-
-  if (requestOrigin && ALLOWED_LOCALHOST_ORIGINS.includes(requestOrigin)) {
-    preflightHeaders.set("Access-Control-Allow-Origin", requestOrigin);
-    preflightHeaders.set(
-      "Access-Control-Allow-Methods",
-      "GET, POST, PUT, DELETE, OPTIONS"
-    );
-    preflightHeaders.set(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, X-Requested-With"
-    ); // Ajusta según las cabeceras que tu cliente envíe
-    preflightHeaders.set("Access-Control-Max-Age", "86400"); // Cachea la respuesta preflight por 1 día (opcional)
-  } else if (process.env.NODE_ENV !== "production" && !requestOrigin) {
-    // Para herramientas como Postman en desarrollo
-    preflightHeaders.set("Access-Control-Allow-Origin", "*");
-    preflightHeaders.set(
-      "Access-Control-Allow-Methods",
-      "GET, POST, PUT, DELETE, OPTIONS"
-    );
-    preflightHeaders.set(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, X-Requested-With"
-    );
-    preflightHeaders.set("Access-Control-Max-Age", "86400");
-  }
-
-  return new NextResponse(null, { status: 204, headers: preflightHeaders });
+  const corsHeaders = getCorsHeaders(request);
+  return new NextResponse(null, { status: 204, headers: corsHeaders });
 }

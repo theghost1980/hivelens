@@ -1,5 +1,36 @@
 # Hivelens - Dev Logs
 
+## Sesión del Día (27/05/2025)
+
+En esta sesión, se revisó y actualizó la configuración de Cross-Origin Resource Sharing (CORS) para la API, con el objetivo de permitir un acceso más flexible y seguro según el entorno de ejecución.
+
+### Mejoras Implementadas:
+
+1.  **Configuración CORS Diferenciada por Entorno:**
+
+    - **Entorno de Producción (`process.env.NODE_ENV === "production"`)**:
+      - Se configuró la API para aceptar solicitudes desde cualquier origen, siempre y cuando la solicitud provenga de un sitio `https` (HTTPS).
+      - La cabecera `Access-Control-Allow-Origin` reflejará dinámicamente el origen `https` de la solicitud.
+    - **Entorno de Desarrollo (o cualquier otro no productivo)**:
+      - Se mantiene una lista blanca (`DEVELOPMENT_WHITELISTED_ORIGINS`) para orígenes específicos de `localhost` (ej. `http://localhost:3000`, `http://localhost:9002`).
+      - Para facilitar las pruebas con herramientas como Postman (que pueden no enviar la cabecera `Origin`), se permite el acceso desde cualquier origen (`Access-Control-Allow-Origin: *`).
+
+2.  **Refactorización de `cors.utils.ts`:**
+
+    - La función `getCorsHeaders` ahora centraliza toda la lógica para determinar las cabeceras CORS apropiadas, incluyendo `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers`, y `Access-Control-Max-Age`.
+    - Se asegura que la cabecera `Vary: Origin` se establezca siempre, lo cual es una buena práctica para el cacheo de respuestas CORS.
+    - La función `handleCorsPreflight` fue simplificada para reutilizar `getCorsHeaders`, haciendo el código más DRY.
+    - La constante `ALLOWED_LOCALHOST_ORIGINS` fue renombrada a `DEVELOPMENT_WHITELISTED_ORIGINS` para mayor claridad.
+
+3.  **Aplicación Consistente en Rutas de API:**
+    - Las rutas de API existentes (`src/app/api/search/route.ts` y `src/app/api/route.ts`) ya utilizaban las funciones `getCorsHeaders` y `handleCorsPreflight`, por lo que automáticamente heredan esta nueva lógica CORS mejorada sin necesidad de modificaciones directas en esos archivos para la gestión de CORS.
+
+### Archivos Modificados en esta Sesión:
+
+- `c:\Users\saturno\Downloads\HIVE-Projects\hivelens\src\lib\cors.utils.ts`
+
+---
+
 ## Sesión del Día (Fecha Actual - 26/05/2025)
 
 En la sesión de hoy, nos enfocamos en mejorar significativamente el proceso de sincronización de datos de HIVE y la información proporcionada al usuario.
